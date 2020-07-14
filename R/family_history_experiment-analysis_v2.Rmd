@@ -1,0 +1,1878 @@
+---
+title: "Family History Experiment: analysis"
+author: "Adeline Lo"
+date: "Last Edited: July 2020"
+output: 
+  html_document: 
+    pandoc_args: ["--lua-filter=color-text.lua"]
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: united
+  pdf_document: 
+    pandoc_args: ["--lua-filter=color-text.lua"]
+    keep_tex: true
+---
+<style type="text/css">
+.main-container {
+  max-width: 1800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+```{cat, engine.opts = list(file = "color-text.lua")}
+Span = function(span)
+  color = span.attributes['color']
+  -- if no color attribute, return unchange
+  if color == nil then return span end
+  
+  -- tranform to <span style="color: red;"></span>
+  if FORMAT:match 'html' then
+    -- remove color attributes
+    span.attributes['color'] = nil
+    -- use style attribute instead
+    span.attributes['style'] = 'color: ' .. color .. ';'
+    -- return full span element
+    return span
+  elseif FORMAT:match 'latex' then
+    -- remove color attributes
+    span.attributes['color'] = nil
+    -- encapsulate in latex code
+    table.insert(
+      span.content, 1,
+      pandoc.RawInline('latex', '\\textcolor{'..color..'}{')
+    )
+    table.insert(
+      span.content,
+      pandoc.RawInline('latex', '}')
+    )
+    -- returns only span content
+    return span.content
+  else
+    -- for other format return unchanged
+    return span
+  end
+end
+```
+
+```{css, echo=FALSE}
+.pretty {
+  background-color: white;
+  border: 3px solid blue;
+  font-weight: bold;
+  font-family: Courier;
+}
+caption {
+      color: darkblue;
+      font-weight: bold;
+      font-size: 1.0em;
+    } 
+```
+
+```{r setup, include=FALSE, message=FALSE}
+extrafont::loadfonts()
+source("../R_fns.R")
+library(readxl)
+library(dplyr)
+library(foreign)
+library(tidyverse)
+library(readstata13)
+library(survey)
+library(robustHD)
+library(sandwich)
+library(lmtest)
+#sensitivity ovb
+library(sensemakr) 
+#graphics
+library(ggplot2)
+library(wesanderson)
+library(RColorBrewer)
+library(viridis)
+library(forcats)
+library(hrbrthemes)
+#text
+library(quanteda)
+library(readtext)
+library(stringr)
+library(SentimentAnalysis)
+library(topicmodels)
+library(wordcloud)
+#library(sf) #config issues
+library(rvest)
+library(scales)
+library(MatchIt)
+library(jtools)
+library(factoextra)
+#html tables
+library(kableExtra)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(texreg)
+#output tables
+library(stargazer)
+#mediation
+library(mediation)
+#balance
+library(cobalt)
+library(xtable)
+#worldmaps
+library(tidyverse)
+library(rvest)
+library(magrittr)
+library(ggmap)
+library(stringr)
+library(rworldmap)
+library(rgeos)
+library(cowplot)
+library(googleway)
+library(ggrepel)
+#library(ggspatial) #problem propagated from sf
+#library(libwgeom)
+#library("sf")
+#library("rnaturalearth")
+library("rnaturalearthdata")
+
+# Colorblind friendly palette with grey:
+cbp1 <- c("#999999", "#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+# Custom palette"
+custom.col <- c("#FFDB6D", "#C4961A", "#F4EDCA", 
+                "#D16103", "#C3D7A4", "#52854C", "#4E84C4", "#293352")
+```
+
+<!-- Set up data -->
+
+```{r,eval=TRUE,warnings=FALSE,messages=FALSE,echo=FALSE}
+d<-readRDS("../../Data/d.rds")
+#output open-ended question answers based on treatment assignment
+open.ended<-as.data.frame(d[,c("Family_History_Treatment","Imm_reason_text","Immigration-Treatmen")])
+open.ended<-open.ended[order(open.ended$Family_History_Treatment,decreasing=TRUE),]
+write.csv(open.ended, "openendedbytreatment.csv") 
+set.seed(12020)
+#minor cleaning
+quota<-read.csv("SurveyQuotas_Empathy Baseline_2020-02-10.csv")
+#desired proportions for each variable is amount in quota divided by total quota
+quota$prop<-NA
+quota$prop<-quota$Quota/quota$Quota[1]
+quota$prop_actual<-NA
+quota$prop_actual<-quota$Completes/quota$Completes[1]
+quota$prop_diff<-quota$prop-quota$prop_actual
+```
+
+# Main treatment effect
+
+Randomization was of family history treatment (`Family_History_Treatment`) either before outcome variables (treatment group), or after outcome variables collected (control). Outcome variables are: "Do you agree or disagree that the United States should limit the number of immigrants entering the country?" (`Immigration-Open`) and "On a scale from 0 to 100, where 0 means "Completely Unfavorable" and 100 means "Completely Favorable", how would you describe your views of immigrants in the United States?" (`Immigration-Therm`). We're going to flip the `Immigration-Open` variable though for interpretation purposes and call it `Immigration-Open-Int` -- larger values indicate more willingness for open immigration policies.
+
+We consider simple t-tests first (no controlled covariates).
+
+## Immigration Open outcome
+
+**t-test of family history treatment effect on (policy) open immigration**
+
+```{r,echo=FALSE,warning=FALSE,eval=TRUE}
+t<-t.test(d$`Immigration-Open-Int`~ d$`Family_History_Treatment`,alternative=("two.sided"),conf.level=0.95)
+t
+tmp <- data.frame(name=c("Control","Treatment"),value=t$estimate)
+barplot(height=tmp$value, names=tmp$name, density=c(30,7) , angle=c(11,36) , col="brown",ylim=c(0,7),main="Open Immigration outcome",ylab="Likert scale value")
+```
+
+**OLS family history treatment effect on (policy) open immigration**
+
+* Model 1: Open Immigration ~ Treatment -- basic OLS (should look like t-test results)
+* Model 2: Open Immigration ~ Treatment + Party + Treatment*Party
+* Model 3: Open Immigration ~ Treatment + EmpathyBattery + Treatment*EmpathyBattery (empathy battery standardized)
+
+```{r,echo=FALSE,warning=FALSE,eval=TRUE}
+m1 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment`, data = d)
+#we'll control for party id in m2 (only covariate slightly imbalanced)
+m2 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + partyid2 + `Family_History_Treatment`*partyid2, data = d)
+#we'll control for empathy baseline in m3
+m3 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s, data = d)
+tab_model(m1, m2, m3, auto.label=TRUE)
+```
+
+Estimated coefficient of Family History Treatment on Open Immigration is `r m1$coefficients[2]`, with a p-value of `r summary(m1)$coefficients[2,4]`.
+
+There does not seem to be any evidence of a treatment effect on the open immigration outcome. Democrats are more likely to favor open immigration compared to a baseline of Independents, Republicans less so. Higher empathy baseline scores correlated with favoring open immigration.
+
+**OLS family history treatment effect on (policy) open immigration, checking for politically engageed**
+
+Are high empathy types more politically engaged (measured here as: want to contact president) andd more likely to want to limit immig more/less likely to favor open immig? I'm measuring this as a positive interaction effect between empathy types and a willingness to contact Trump on limiting immigration; as well as a possible positive interaction effect between empathy types, willingness to contact Trump and the Family History Treatment on the likelihood of wanting to limit immigration.
+
+
+```{r,echo=FALSE,warning=FALSE}
+m1<-lm(`Immigration-Open-Int`~ Family_History_Treatment + empathybattery_s + wouldsubmit_comments + empathybattery_s*wouldsubmit_comments + Family_History_Treatment*empathybattery_s + Family_History_Treatment*wouldsubmit_comments + Family_History_Treatment*empathybattery_s*wouldsubmit_comments, data=d)
+tab_model(m1, auto.label=TRUE)
+```
+
+There do not appear to be obvious associations between baseline empathy, political engagement, and family history treatment with preference for open immigration among respondents.
+
+## Feelings thermometer outcome
+
+**t-test of family history treatment effect on thermometer**
+
+```{r,echo=FALSE,warning=FALSE}
+t<-t.test(d$`Immigration-Therm_1`~ d$`Family_History_Treatment`,alternative=("two.sided"),conf.level=0.95)
+t
+tmp <- data.frame(name=c("Control","Treatment"),value=t$estimate)
+barplot(height=tmp$value, names=tmp$name, density=c(30,7) , angle=c(11,36) , col="brown",ylim=c(0,80),main="Average feelings thermometer scores",ylab="Feelings thermometer")
+#conf intervals on mean values
+t0<-t.test(d$`Immigration-Therm_1`[d$Family_History_Treatment==0])
+t1<-t.test(d$`Immigration-Therm_1`[d$Family_History_Treatment==1])
+lines(x=c(0.7,0.7),y=t0$conf.int)
+lines(x=c(1.9,1.9),y=t1$conf.int)
+text(x=0.7,y=62,paste(round(t0$estimate,2)))
+text(x=1.9,y=65,paste(round(t1$estimate,2)))
+```
+
+Evidence of a treatment effect on the thermometer outcome.
+
+A simple t-test grouped by treatment suggests that for `Family_History_Treatment==1` the mean on the thermometer is larger than the mean for `Family_History_Treatment==0` (`r round(t$estimate[2],2)` vs `r round(t$estimate[1],2)`), with a p-value of `r round(t$p.value,4)`.
+
+**OLS family history treatment effect on thermometer**
+
+* Model 1: Thermometer ~ Treatment -- basic OLS (should look like t-test results)
+* Model 2: Thermometer ~ Treatment + Party + Treatment*Party
+* Model 3: Thermometer ~ Treatment + EmpathyBattery + Treatment*EmpathyBattery (empathy battery standardized)
+
+```{r,echo=FALSE,warning=FALSE,eval=TRUE}
+m1 <- lm(`Immigration-Therm_1` ~ `Family_History_Treatment`, data = d)
+#we'll control for party id in m2 (only covariate slightly imbalanced)
+m2 <- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + partyid2 + `Family_History_Treatment`*partyid2, data = d)
+#we'll control for empathy baseline in m3
+m3 <- lm(`Immigration-Therm_1`~ `Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s, data = d)
+tab_model(m1, m2, m3, auto.label=TRUE)
+```
+
+```{r,echo=FALSE,warning=FALSE, eval=FALSE}
+#Alternatively, I'm going to verify that we've achieved balance on covariates of interest and conduct the t-test on the matched sample: I'm going to match on empathy score, age, gender, ideology, education and race. Then let's conduct the t-test once more.
+#t<-t.test(d$empathybattery~d$`Family_History_Treatment`,alternative=("two.sided"),conf.level=0.95)
+d.sub<-d[,c("Family_History_Treatment","empathybattery","Age","educ","gender","ideo","partyid","race","Immigration-Therm_1")]
+d.sub<-d.sub[complete.cases(d.sub),] #matchit requires no NA in data
+match1 <- matchit(`Family_History_Treatment` ~ empathybattery + Age + as.factor(gender) + as.factor(ideo) + as.factor(educ) + as.factor(race), data = d.sub, method = "nearest", distance = "logit")
+#+ as.factor(educ) + as.factor(gender) + as.factor(ideo) + as.factor(partyid) + as.factor(race)
+#summary(match1)
+m.data1 <- match.data(match1,distance ="pscore") 
+t<-t.test(m.data1$`Immigration-Therm_1`[m.data1$`Family_History_Treatment`==1],m.data1$`Immigration-Therm_1`[m.data1$`Family_History_Treatment`==0],paired=TRUE)
+t
+tmp <- data.frame(
+  name=c("Control","Treatment"),
+  value=c(mean(m.data1$`Immigration-Therm_1`[m.data1$`Family_History_Treatment`==0]),mean(m.data1$`Immigration-Therm_1`[m.data1$`Family_History_Treatment`==1]))
+)
+barplot(height=tmp$value, names=tmp$name, density=c(30,7) , angle=c(11,36) , col="brown",ylim=c(0,65),main="Average feelings thermometer scores (adjustments for balance)",ylab="Feelings thermometer")
+```
+
+The family history treatment has a positive bump on the immigration thermometer outcome of `r round(t$estimate,2)` points upwards, with a p value of `r round(t$p.value,2)`.
+
+**OLS family history treatment effect on thermometer, checking for politically engageed**
+
+Are high empathy types more politically engaged (measured here as: want to contact president) andd more likely to want to limit immig more/less likely to give high thermometer ratings? I'm measuring this as a positive interaction effect between empathy types and a willingness to contact Trump on limiting immigration; as well as a possible positive interaction effect between empathy types, willingness to contact Trump and the Family History Treatment on the likelihood of wanting to limit immigration.
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+m1<-lm(`Immigration-Therm_1`~ Family_History_Treatment + empathybattery_s + wouldsubmit_comments + empathybattery_s*wouldsubmit_comments + Family_History_Treatment*empathybattery_s + Family_History_Treatment*wouldsubmit_comments + Family_History_Treatment*empathybattery_s*wouldsubmit_comments, data=d)
+tab_model(m1,auto.label=TRUE)
+```
+
+High empathy types who are politically engaged are more likely to respond positively in the thermometer rating to the family history treatment. We do not find the same subgroup effect on the open immigration outcome.
+
+# Mechanism tests
+
+Immediately prior to the outcome questions and following the treatment, respondents are asked a question that measures their empathy toward immigrants. Specifically, respondents are asked how much they agree or disagree with the following statement:
+
+"I empathize with the reasons people want to immigrate to the United States, as well as
+the hardships they face when coming to this country. Higher responses would indicate
+more empathy for immigrants." (`Immigration-Empathy`)
+
+We implemented a parallel encouragement design in an effort to measure if the treatment causes respondents to feel more empathy for immigrants (Imai et al. 2013). 
+
+Earlier in the survey, respondents are also asked a battery of questions utilized by
+psychologists to measure an individual's general levels of empathy (Davis 1980). This
+battery includes 21 questions whose order is randomized.
+
+## Mediation analysis (Baron \& Kenny): Empathizing with Immigrant Experiences
+
+We analyze (as delineated in the PAP) the mediating effect of empathizing with immigrant experiences (`Immigration-Empathy-Int`) on the family immigration history effect. All models run with gender, age, party, education, and baseline empathy controls.
+
+* Model 1: Mediator ~ Treatment
+* Model 2: Y1 ~ Mediator (open immigration)
+* Model 3: Y2 ~ Mediator (thermometer)
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+# Mediator ~ Treatment: here I follow the convention in the PAP -- though I'm not sure it requires a lm test
+med1 <- lm(`Immigration-Empathy-Int` ~ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+# Y1 ~ Mediator
+med2a <- lm(`Immigration-Open-Int`~`Immigration-Empathy-Int`+ gender + Age + partyid2 + educ + empathybattery2,data=d)
+# Y2 ~ Mediator
+med2b <- lm(`Immigration-Therm_1`~`Immigration-Empathy-Int`+ gender + Age + partyid2 + educ + empathybattery2,data=d)
+tab_model(med1,med2a,med2b,dv.labels=c("Model 1 Mediator: Immigration-Empathy","Model 2 Open immigration","Model 3 Thermometer"),terms = c("(Intercept)","Family_History_Treatment [1]", "Immigration-Empathy-Int"), robust=TRUE, show.se=TRUE)
+```
+
+Mediator effect is `r coef(med1)[2]` with a p-value of `r summary(med1)$coefficients[2,4]`. For Y1 (Limit immigration), the treatment has a negative effect (less limitation), `r coef(med2a)[2]` with a p-value of `r summary(med2a)$coefficients[2,4]`. For Y2 (immigration thermometer), the treatment has a positive effect (warmer feelings), `r coef(med2b)[2]` with a p-value of `r summary(med2b)$coefficients[2,4]`.
+
+Does the treatment coefficient decrease after inclusion of the mediator?
+
+* Model 1: Y1 ~ Treatment (open immig)
+* Model 2: Y1 ~ Mediator + Treatment (open immig)
+* Model 3: Y2 ~ Treatment (thermometer)
+* Model 4: Y2 ~ Mediator + Treatment (thermometer)
+* Model 5: Y2 ~ Mediator + Treatment + Mediator*Treatment (thermometer) [We use the usual interaction set up as well.]{color="blue"}
+
+```{r,echo=FALSE,warning=FALSE,eval=TRUE}
+## Outcome of Limiting immigration
+# Y ~ Mediator + Treatment: 
+med1a <- lm(`Immigration-Open-Int`~ `Family_History_Treatment` + gender + Age + partyid2 + educ + empathybattery2, data = d)
+med1b <- lm(`Immigration-Open-Int`~ `Immigration-Empathy-Int`+ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+tab_model(med1a,med1b,dv.labels=c("Model 1: Open Immig","Model 2: Open Immig"),terms = c("(Intercept)","Family_History_Treatment [1]", "Immigration-Empathy-Int"), robust=TRUE, show.se=TRUE)
+## Y2 ~ Mediator + Treatment: Outcome of Thermometer
+med2a <- lm(`Immigration-Therm_1`~ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+med2b <- lm(`Immigration-Therm_1`~ `Immigration-Empathy-Int`+ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+tab_model(med2a,med2b,dv.labels=c("Model 3: Therm","Model 4: Therm"),terms = c("(Intercept)","Family_History_Treatment [1]", "Immigration-Empathy-Int"), robust=TRUE, show.se=TRUE)
+## Y2 ~ Treatment + Treatment* Mediator + Mediator
+med2c <- lm(`Immigration-Therm_1`~ `Immigration-Empathy-Int`+ `Family_History_Treatment` + 
+              `Immigration-Empathy-Int`*`Family_History_Treatment`, data = d)
+tab_model(med2a,med2b,med2c, dv.labels=c("Model 3: Therm","Model 4: Therm", "Model 5: Therm"),terms = c("(Intercept)","Family_History_Treatment [1]", "Immigration-Empathy-Int"), robust=TRUE, show.se=TRUE)
+```
+
+**Replicate Table 1 in paper**
+
+```{r,echo=FALSE,warning=FALSE,eval=TRUE}
+#Stage 1: Treatment effect on Thermometer
+med2a <- lm(`Immigration-Therm_1`~ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+#Stage 2: Treatment effect on Mediator
+med1 <- lm(`Immigration-Empathy-Int` ~ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+#Stage 3: Treatment effect on Thermometer, Controlling for Mediator
+med2b <- lm(`Immigration-Therm_1`~ `Immigration-Empathy-Int`+ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+tab_model(med2a,med1,med2b, dv.labels=c("Stage 1: Y~T","Stage 2: M~T", "Stage 3: Y~M+T"),terms = c("(Intercept)","Family_History_Treatment [1]", "Immigration-Empathy-Int"), robust=TRUE, show.se=TRUE)
+```
+
+## Sensitivity analysis of mediation results using Baron \& Kenny approach (Cinelli & Hazlett 2020)
+
+Cinelli & Hazlett (2020)
+
+* Interpreting the interacting effects of the treatment and mediator requires the assumption of *no unobserved confounders* for unbiasedness; while the treatment was randomized, the mediator (empathy for immigrants) is not.
+* Benchmark covariate (`benchmark_covariates`):  covariate that will be used to bound the plausible strength of the unobserved confounders (possibly affecting likelihood of taking on a specific mediator value upon receiving treatment/control as well as related to thermometer ratings) -- we focus on **empathy** (baseline empathy of the respondent)
+
+
+```{r, echo=FALSE, eval=TRUE, warning=FALSE, message=FALSE}
+set.seed(12020)
+sub.d<-data.frame(y1=d$`Immigration-Open-Int`#d$`Immigration-Open-Int`
+                  ,y2=d$`Immigration-Therm_1`
+                  ,med=d$`Immigration-Empathy-Int`
+                  ,treat=as.numeric(as.character(d$Family_History_Treatment))
+                  ,med_treat=d$`Immigration-Empathy-Int`*as.numeric(as.character(d$Family_History_Treatment))
+                  ,empathy=d$empathybattery2
+                  ,empathy0=d$empathybattery_s
+                  ,gender=d$gender
+                  ,age=d$Age
+                  ,party=d$partyid2
+                  ,party_Democrat=ifelse(d$partyid2=="Democrat",1
+                                           ,ifelse(d$partyid2=="Independent"|d$partyid2=="Republican",0,NA))
+                  ,party_Independent=ifelse(d$partyid2=="Independent",1
+                                           ,ifelse(d$partyid2=="Republican"|d$partyid2=="Democrat",0,NA))
+                  ,education=d$educ_int)
+
+#base_model <- lm(y2 ~ med + treat + med*treat + gender + age + party + education, data = sub.d)
+base_model <- lm(y2 ~ med + treat + med_treat + gender + age + party_Democrat + party_Independent + education + empathy, data = sub.d)
+
+## sensitivity analysis
+# runs sensemakr for sensitivity analysis
+# kd ky these arguments parameterize how many times stronger the confounder is related to the treatment (kd) and to the outcome (ky) in comparison to the observed benchmark covariates. Setting kd = 1:3 and ky = 1:3 means we want to investigate the maximum strength of a confounder once, twice, or three times as strong as all benchmark covs (in explaining treatment and outcome variation). If only kd is given, ky will be set equal to it by default.
+med_sensitivity <- sensemakr(model = base_model, 
+                                treatment = "med_treat",
+                                benchmark_covariates = c("empathy"),
+                                kd = 1:3, 
+                                ky = 1:3, 
+                                q = 1,#what frac of the effect estimate would have to be explained away to be problematic. Setting q = 1, as we do here, means that a reduction of 100% of the current effect estimate, that is, a true effect of zero, would be deemed problematic. The default is 1.
+                                alpha = 0.05, 
+                                reduce = TRUE)#should we consider confounders acting towards increasing or reducing the absolute value of the estimate? The default is reduce = TRUE, which means we are considering confounders that pull the estimate towards (or through) zero.
+```
+
+```{r, echo=FALSE, eval=TRUE, warning=FALSE, message=FALSE, results='asis'}
+#med_sensitivity
+ovb_minimal_reporting(med_sensitivity, format = "html")
+```
+
+```{r, echo=FALSE, eval=FALSE, warning=FALSE, message=FALSE, results='asis'}
+#med_sensitivity
+ovb_minimal_reporting(med_sensitivity, format = "latex")
+```
+
+**Findings**
+
+* The robustness value for bringing the point estimate of `med_treat` (mediator interacted with treatment) exactly to zero ($RV_{q=1}$) is 3.8% . This means that unobserved confounders that explain 3.8% of the residual variance both of the mediator*treatment and of the outcome are sufficiently strong to explain away all the observed effect. On the other hand, unobserved confounders that do not explain at least 3.8% of the residual variance both of the treatment and of the outcome are not sufficiently strong to do so.
+* The robustness value for testing the null that the coefficient of `med_treat` is zero ($RV_{q=1,\alpha=0.05}$) falls to 0.7%. This suggests that unobserved confounders that explain 0.7% of the residual variance of both `med_treat` and the outcome are sufficiently strong to bring the lower bound of the confidence interval to zero at an alpha level of 5%. On the other hand, unobserved confounders that do not explain at least 0.7% of the residual variance of both `med_treat` and the outcome are not sufficiently strong to do so.
+* The partial $R^2$ of `med_treat` with `Immigration-Therm_1` (outcome) means that in an extreme scenario where we assume that unobserved confounders explain all of the left out variance of the outcome, these unobserved confounders must explain at least 0.2% of the residual variance of `med_treat` to fully explain away the observed effect. 
+* How can we think of the possible unobserved confounding in comparative terms? We consider such an unobserved confounder explaining whether a respondent feels empathy towards immigrants upon receiving the family history treatment in the context of what is likely to be the largest confounder of all (which in this context is thankfully observed) baseline empathy (`empathy`) of the respondent. The lower corner of the table provides bounds on confounding as strong as baseline empathy (where `1` is above the average empathy score, `0` below), $R^2_{Y\sim D|{\bf X}}=0.9$\% and $R^2_{D\sim Z|{\bf X}}=0.0$\%. These values are below the RV so the the table suggests that confounders as strong as `empathy` are not sufficient to explain away the observed estimate.
+* Furthermore, the bound on $R^2_{D\sim Z|{\bf X}}$ is below the partial $R^2$ of `med_treat` with the outcome, $R^2_{Y\sim D|{\bf X}}$ -- which means even an extreme unobservable confounder that explains all the residual variation of the thermometer outcome and as strongly associated with `med_treat` would not be able to to overturn the interaction effect of the mediator and treatment. 
+
+**Sensitivity of the t-value for testing the null hypothesis of zero effect**
+
+```{r,echo=FALSE,eval=TRUE,message=FALSE,warning=FALSE}
+#Figures/ch-sens-ttest-y2.pdf
+plot(med_sensitivity,sensitivity.of="t-value",xlim=c(0.0,0.2),ylim=c(0.0,0.2),xlab="Partial R-squared of confounder with mediator interacted with treatment")
+text(x=rep(0.2,4),y=c(-0.005,0.01,0.07,0.175),col=c("red",rep("gray80",3)),label=c("1.961","0","-5","-10"),cex=0.75)
+```
+
+* At the 5% significance level, the null hypothesis of zero effect would still be rejected given confounders once, twice or even three times as strong as `empathy`.
+
+## Mediation analysis (Imai et al. 2010): Empathizing with Immigrant Experiences
+
+We analyze (*not* delineated in PAP) the mediating effect of empathizing with immigrant experiences on the family immigration history effect using Imai et al. 2010 approach for model-based causal mediation analysis.
+
+Key Assumption: Sequential Ignorability
+
+Specify 2 statistical models:
+1) mediator model for the conditional distribution of the mediator $M_i$ given treatment $T_i$ and a set of the observed pre-treatment covariates $X_i$ and 
+2) outcome model for the conditional distribution of the outcome $Y_i|T_i,M_i,X_i$T
+
+Fit 1) and 2) separately. The fitted objects are main inputs to the `mediate` fn, which computes the estimated ACME and other quantities of interest under these models and the sequential ignorability assumption.
+
+**Immigration Open**
+We're going to control for gender, age, party and education. All confidence interval estimators are estimated with a nonparametric bootstrap.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,eval=FALSE}
+set.seed(12020)
+sub.d<-data.frame(y1=d$`Immigration-Open-Int`#d$`Immigration-Open-Int`
+                  ,y2=d$`Immigration-Therm_1`
+                  ,med=d$`Immigration-Empathy-Int`
+                  ,treat=d$Family_History_Treatment
+                  ,empathy=d$empathybattery2
+                  ,empathy0=d$empathybattery_s
+                  ,gender=d$gender
+                  ,age=d$Age
+                  ,party=d$partyid2
+                  ,education=d$educ_int)
+# Mediator ~ Treatment
+med1.fit <- lm(med ~ treat + gender + age + party + education + empathy, data = sub.d)
+# Y1 ~ Mediator + Treatment
+out1.fit <- lm(y1~med+treat + gender + age + party + education + gender + age + party+ education + empathy,data=sub.d)
+#out1.fit <- glm(y1~ med + treat,data=sub.d, family = binomial("probit"))
+
+## nonparametric bootstrap instead of quasi-Bayesian Monte Carlo simulation for variance estimation
+med1.out<-mediate(med1.fit,out1.fit,treat="treat",mediator="med",sims=1000,boot=TRUE)#robustSE=TRUE
+saveRDS(med1.out,file="med1_out.rds") #this version without empathy control
+
+saveRDS(med1.out,file="med1_wEmpathy_out.rds") #this version with empathy control
+```
+
+**ver without Empathy as control**
+```{r,echo=FALSE,warning=FALSE,message=FALSE,eval=TRUE}
+med1.out<-readRDS(file="med1_out.rds")
+#summary(med1.out)
+#pdf("Figures/imai-mediate-y1.pdf") 
+plot(med1.out,col="gray30", main="Open Immigration")
+text(x=0.025,y=3.1,label="0.0227",col="gray30")
+text(x=-0.0313,y=2.1,label="-0.0313",col="gray30")
+text(x=(-0.0086-0.03),y=1.1,label="-0.0086",col="gray30")
+```
+
+**ver with Empathy as control**
+```{r,echo=FALSE,warning=FALSE,message=FALSE,eval=TRUE}
+med1w.out<-readRDS(file="med1_wEmpathy_out.rds")
+#summary(med1.out)
+#pdf("Figures/imai-mediate-wempathy-y1.pdf") 
+plot(med1w.out,col="gray30", main="Open Immigration")
+text(x=0.025,y=3.1,label="0.0233",col="gray30")
+text(x=-0.0313,y=2.1,label="-0.0302",col="gray30")
+text(x=(-0.0068-0.02),y=1.1,label="-0.0068",col="gray30")
+```
+
+Here the estimated ACMEs are statistically significantly different from zero but the estimated average direct and total effects are not. The results suggest that the treatment in the family history experiment may have increased empathy for immigrants, which in turn made respondents more open to immigration. 
+
+[The second version of the effects plots above accounts for controlling for baseline empathy of the respondent. No significant changes -- though the ACME grows a small amount.]{color="blue"}
+
+```{r,eval=FALSE,echo=FALSE,message=FALSE}
+# Allowing treatment-mediator interaction
+out1.fitx <- lm(y1~ med + treat + treat:med + gender + age + party+ education, data=sub.d)
+med1.outx <- mediate(med1.fit, out1.fitx, boot=TRUE, sims=1000, treat="treat", mediator="med")
+summary(med1.outx)
+#pdf("Figures/imai-mediatex-x-y1.pdf") 
+plot(med1.outx,col="gray30", main="Causal Mediation Analysis on\n Open Immigration with Treatment-Mediator Interaction")
+#dev.off()
+# Allowing ``moderated mediation'' with respect to empathy battery
+med1.fitint <- lm(med ~ treat*empathy + gender + age + party+ education, data = sub.d)
+out1.fitint <- lm(y1~ med + treat*empathy + med*empathy + gender + age + party+ education, data=sub.d)
+
+med1.outint1 <- mediate(med1.fitint, out1.fitint, sims=1000,boot=TRUE, treat="treat", mediator="med", covariates = list(empathy = 1))
+med1.outint0 <- mediate(med1.fitint, out1.fitint, sims=1000,boot=TRUE, treat="treat", mediator="med", covariates = list(empathy = 0))
+
+summary(med1.outint1)
+#pdf("Figures/imai-mediate-mod1-y1.pdf") 
+plot(med1.outint1,col="gray30"
+     ,main="Causal Mediation Analysis on Open Immigration:\n Moderated Mediation (High Empathy Respondents)"
+     ,xlim=c(-0.2,0.2))
+#dev.off()
+summary(med1.outint0)
+#pdf("Figures/imai-mediate-mod0-y1.pdf") 
+plot(med1.outint0,col="gray30"
+     ,main="Causal Mediation Analysis on Open Immigration:\n Moderated Mediation (Low Empathy Respondents)"
+     ,xlim=c(-0.2,0.2))
+#dev.off()
+#directly test difference in High/Low Empathy Respondents
+  #by directly testing diff in ACME and ADE between 0/1=empathy
+med.init <- mediate(med1.fitint, out1.fitint, treat = "treat", mediator = "med", sims=1000)
+test.modmed(med.init, covariates.1 = list(empathy = 1), covariates.2 = list(empathy = 0), sims = 1000)
+# # using empathybattery original continuous
+# med1.fitint2 <- lm(med ~ treat*empathy0, data = sub.d)
+# out1.fitint2 <- lm(y1~ med + treat*empathy0 + med*empathy, data=sub.d)
+# med.init <- mediate(med1.fitint2, out1.fitint2, treat = "treat", mediator = "med", sims=1000)
+# test.modmed(med.init, covariates.1 = list(empathy0 = 65), covariates.2 = list(empathy0 = 75), sims = 1000)#use 1st and 3rd quartile
+```
+
+<!-- This last test is a direct test of the difference between High/Low Empathy respondents -- testing moderated mediation. No moderated mediation detected different from 0. -->
+
+**Thermometer**
+
+```{r,echo=FALSE,message=FALSE, eval=FALSE}
+set.seed(12020)
+# Mediator ~ Treatment
+med2.fit <- lm(med ~ treat + gender + age + party + education + empathy, data = sub.d)
+# Y2 ~ Mediator + Treatment
+out2.fit <- lm(y2~ med + treat + gender + age + party + education + empathy,data=sub.d)
+#out1.fit <- glm(y2~ med + treat,data=sub.d, family = binomial("probit"))
+## nonparametric bootstrap instead of quasi-Bayesian Monte Carlo simulation for variance estimation
+med2.out<-mediate(med2.fit,out2.fit,treat="treat",mediator="med",sims=1000,boot=TRUE)#robustSE=TRUE
+saveRDS(med2.out,file="med2_out.rds")
+saveRDS(med2.out,file="med2_wEmpathy_out.rds") #this version with empathy control
+```
+
+**ver without Empathy as control**
+
+```{r,echo=FALSE,message=FALSE, eval=TRUE}
+med2.out<-readRDS(file="med2_out.rds")
+#summary(med2.out)
+#pdf("Figures/imai-mediate-y2.pdf") 
+plot(med2.out,col="gray30", main="Immigration Thermometer")
+text(x=1.7152,y=3.1,label="1.7152",col="gray30")
+text(x=(0.0818+0.45),y=2.1,label="0.0818",col="gray30")
+text(x=(1.7970),y=1.1,label="1.7970",col="gray30")
+#dev.off()
+```
+
+**ver with Empathy as control**
+
+```{r,echo=FALSE,message=FALSE, eval=TRUE}
+med2.out<-readRDS(file="med2_wEmpathy_out.rds")
+#summary(med2.out)
+#pdf("Figures/imai-mediate-wempathy-y2.pdf") 
+plot(med2.out,col="gray30", main="Immigration Thermometer")
+text(x=1.7,y=3.1,label="1.690",col="gray30")
+text(x=(0.0818+0.45),y=2.1,label="0.197",col="gray30")
+text(x=(1.887),y=1.1,label="1.887",col="gray30")
+#dev.off()
+```
+
+Here the estimated ACME is statistically significantly different from zero but the estimated average direct effects is not (there is a total effect). The results suggest that the treatment in the family history experiment may have increased empathy for immigrants, which in turn made respondents more likely to rate higher on the immigration thermometer scale. 
+
+<!-- Below we allow for treatment-mediator interactions, and then moderated mediation with respect to the empathy battery. (currently set at eval=FALSE) -->
+
+```{r,eval=FALSE,echo=FALSE,message=FALSE}
+# Allowing treatment-mediator interaction
+out2.fitx <- lm(y2~ med+treat + treat:med + gender + age + party+ education, data=sub.d)
+med2.outx <- mediate(med2.fit, out2.fitx, boot=TRUE, sims=1000, treat="treat", mediator="med")
+summary(med2.outx)
+#pdf("Figures/imai-mediatex-x-y2.pdf") 
+plot(med2.outx,col="gray30", main="Causal Mediation Analysis on\n Immigration Thermometer with Treatment-Mediator Interaction")
+#dev.off()
+
+# Allowing ``moderated mediation'' with respect to empathy battery
+med2.fitint <- lm(med ~ treat*empathy + gender + age + party+ education, data = sub.d)
+out2.fitint <- lm(y2~med + treat*empathy + med*empathy + gender + age + party+ education, data=sub.d)
+
+med2.outint1 <- mediate(med2.fitint, out2.fitint, sims=1000,boot=TRUE, treat="treat", mediator="med", covariates = list(empathy = 1))
+med2.outint0 <- mediate(med2.fitint, out2.fitint, sims=1000,boot=TRUE, treat="treat", mediator="med", covariates = list(empathy = 0))
+
+summary(med2.outint1)
+#pdf("Figures/imai-mediate-mod1-y2.pdf") 
+plot(med2.outint1,col="gray30"
+     ,main="Causal Mediation Analysis on Immigration Thermometer:\n Moderated Mediation (High Empathy Respondents)"
+     ,xlim=c(-3,5))
+#dev.off()
+
+summary(med2.outint0)
+#pdf("Figures/imai-mediate-mod0-y2.pdf") 
+plot(med2.outint0,col="gray30"
+     ,main="Causal Mediation Analysis on Immigration Thermometer: \n Moderated Mediation (Low Empathy Respondents)"
+     ,xlim=c(-3,5))
+#dev.off()
+
+#directly test difference in High/Low Empathy Respondents
+  #by directly testing diff in ACME and ADE between 0/1=empathy
+med.init <- mediate(med2.fitint, out2.fitint, treat = "treat", mediator = "med", sims=1000)
+test.modmed(med.init, covariates.1 = list(empathy = 1), covariates.2 = list(empathy = 0), sims = 1000)
+# using empathybattery original continuous
+# med2.fitint2 <- lm(med ~ treat*empathy0, data = sub.d)
+# out2.fitint2 <- lm(y2~ med + treat*empathy0 + med*empathy, data=sub.d)
+# med.init <- mediate(med2.fitint2, out2.fitint2, treat = "treat", mediator = "med", sims=1000)
+# test.modmed(med.init, covariates.1 = list(empathy0 = 65), covariates.2 = list(empathy0 = 75), sims = 1000)#use 1st and 3rd quartile
+```
+
+<!-- The last output is a direct test of the difference between High/Low Empathy respondents for ACME (moderated mediation). No moderated mediation. -->
+
+### Sensitivity analysis for Sequential Ignorability Assumption
+
+Conduct a sensitivity analysis for the possible existence of unobserved pre-treatment covariates.
+Sensitivity parameter $\rho\equiv \text{Corr}(\epsilon_{i2},\epsilon_{i3})$; sequential ignorability implies $\rho=0$. We set $\rho$ at different values and see how our ACME changes.
+
+**Sensitivity analysis for Immigration-Open**
+
+```{r,message=FALSE, eval=FALSE, echo=FALSE}
+# Mediator ~ Treatment
+med1.fit <- lm(med ~ treat + gender + age + party + education, data = sub.d)
+# Y1 ~ Mediator + Treatment
+out1.fit <- lm(y1~ med + treat + gender + age + party + education,data=sub.d)
+med1.out <- mediate(med1.fit, out1.fit, treat = "treat", mediator = "med", sims = 1000, boot=TRUE)
+sens1.out <- medsens(med1.out, rho.by = 0.01, effect.type = "indirect", sims = 1000)#vary rho values to
+saveRDS(sens1.out,file="sens1_out.rds")
+
+## Version with Empathy as control
+med1.fit <- lm(med ~ treat + gender + age + party + education + empathy, data = sub.d)
+# Y1 ~ Mediator + Treatment
+out1.fit <- lm(y1~ med + treat + gender + age + party + education + empathy,data=sub.d)
+med1.out <- mediate(med1.fit, out1.fit, treat = "treat", mediator = "med", sims = 1000, boot=TRUE)
+sens1.out <- medsens(med1.out, rho.by = 0.01, effect.type = "indirect", sims = 1000)#vary rho values to
+saveRDS(sens1.out,file="sens1_wEmpathy_out.rds")
+```
+
+
+```{r,message=FALSE, eval=TRUE, echo=FALSE}
+#see how ACME changes
+#sens1.out<-readRDS(file="sens1_out.rds") #wo empathy as control
+sens1.out<-readRDS(file="sens1_wEmpathy_out.rds")
+summary(sens1.out)
+```
+
+When $\rho$ is around 0.10 the ACME becomes 0.
+
+We interpret sensitivity with $R^2$s below. Assume the standard estimation models for Mediator/Outcome:
+
+$Y_i=\alpha_1 + \beta_1 T_i + \epsilon_{i1}$
+$M_i=\alpha_2 + \beta_2 T_i + \epsilon_{i2}$
+$Y_i=\alpha_3 + \beta_3 T_i + \gamma M_i + \epsilon_{i3}$
+
+Assume the unobserved (pre-treatment) confounder formulation
+
+$\epsilon_{i2} = \lambda_2 U_i + \epsilon'_{i2}$
+and
+$\epsilon_{i3} = \lambda_3 U_i + \epsilon'_{i3}$
+
+How much does $U_i$ have to explain for our results to go away?
+
+```{r,message=FALSE,echo=FALSE,eval=TRUE}
+#pdf("Figures/imai-sens-y1.pdf") 
+##pdf("Figures/imai-sens-wempathy-y1.pdf") #w empathy
+plot(sens1.out, sens.par = "rho", main = "Sensitivity Analysis on\n Open Immigration", ylim = c(-0.2, 0.2),xlim=c(-0.5,0.5))#
+#dev.off()
+```
+
+The last plot is plotting the proportion of original variance explained by $U_i$:
+
+$\tilde{R}^2_M \equiv \frac{var(\epsilon_{i2}) - var(\epsilon'_{i2})}{var(M_i)}$
+and
+$\tilde{R}^2_Y \equiv \frac{var(\epsilon_{i3}) - var(\epsilon'_{i3})}{var(Y_i)}$
+
+Reparameterize $\rho$ using $(\tilde{R}^2_M,\tilde{R}^2_Y)$:
+$\rho = \frac{\text{sgn}(\lambda_2\lambda_3)\tilde{R}_M\tilde{R}_Y}{\sqrt{(1-\tilde{R}^2_M)(1-\tilde{R}^2_Y)}}$
+where $R^2_M$ and $R^2_Y$ are from the original mediator/outcome models. We can set $(\tilde{R}^2_M,\tilde{R}^2_Y)$ to different values and see how mediation effects change.
+
+The plot below assumes that the confounder influences both the mediator and outcome variables in the same direction. (This matters because the sensitivity analysis is in terms of the product of $R^2$ statistics; I'm assuming positive because it seems more likely that something positively affecting the Mediator and the Outcome is happening to create the positive finding for the ACME). The bold line represents the various combinations of $R^2$ statistics where the ACME would be 0. In this case the product would have to be 0.01 for the ACME to become 0. Another way to say this is that when the product of the original variance explained by the omitted confounding is 0.01, the point estimate for ACME would be 0.
+
+```{r,message=FALSE, eval=TRUE,echo=FALSE}
+#pdf("Figures/imai-sensR-y1.pdf") 
+#pdf("Figures/imai-sensR-wempathy-y1.pdf") 
+plot(sens1.out, sens.par = "R2", r.type = "total", main = "Sensitivity Analysis on\n Open Immigration", ylim = c(0,.9),xlim=c(0,1),
+     sign.prod="positive",
+     xlab="Proportion of Total Variance in Empathy\n Explained by Confounder",
+     ylab="Proportion of Total Variance in Open Immig\n Explained by Confounder") # assume confounder influences both mediator/outcome variables in same direction
+#dev.off()
+```
+
+**Sensitivity analysis for Immigration Thermometer**
+
+```{r,echo=FALSE,eval=FALSE,message=FALSE}
+# Mediator ~ Treatment
+med2.fit <- lm(med ~ treat + gender + age + party + education , data = sub.d)
+# Y2 ~ Mediator + Treatment
+out2.fit <- lm(y2 ~ med + treat + gender + age + party + education,data=sub.d)
+med2.out <- mediate(med2.fit, out2.fit, treat = "treat", mediator = "med", sims = 1000, boot=TRUE)
+sens2.out <- medsens(med2.out, rho.by = 0.01, effect.type = "indirect", sims = 1000)#vary rho values to see how ACME changes
+saveRDS(sens2.out,file="sens2_out.rds")
+
+## ver with Empathy as control
+# Mediator ~ Treatment
+med2.fit <- lm(med ~ treat + gender + age + party + education + empathy, data = sub.d)
+# Y2 ~ Mediator + Treatment
+out2.fit <- lm(y2 ~ med + treat + gender + age + party + education + empathy,data=sub.d)
+med2.out <- mediate(med2.fit, out2.fit, treat = "treat", mediator = "med", sims = 1000, boot=TRUE)
+sens2.out <- medsens(med2.out, rho.by = 0.01, effect.type = "indirect", sims = 1000)#vary rho values to see how ACME changes
+saveRDS(sens2.out,file="sens2_wEmpathy_out.rds")
+```
+
+```{r,echo=FALSE,eval=TRUE,message=FALSE}
+#sens2.out<-readRDS(file="sens2_out.rds")
+sens2.out<-readRDS(file="sens2_wEmpathy_out.rds")
+summary(sens2.out)
+```
+
+When $\rho$ is around 0.44 the ACME becomes 0.
+
+```{r,echo=FALSE,message=FALSE}
+#pdf("Figures/imai-sens-y2.pdf") 
+#pdf("Figures/imai-sens-wempathy-y2.pdf") 
+plot(sens2.out, sens.par = "rho", main = "Sensitivity Analysis on\n Immigration Thermometer", ylim = c(-3, 6))#
+#dev.off()
+```
+
+The last plot is plotting the proportion of original variance explained by $U_i$ for Y2.
+The plot below assumes that the confounder influences both the mediator and outcome variables in the same direction. (again, I'm assuming positive because it seems more likely that something positively affecting the Mediator and the Outcome is happening to create the positive finding for the ACME). The bold line represents the various combinations of $R^2$ statistics where the ACME would be 0. In this case the product would have to be 0.19 for the ACME to become 0. Another way to say this is that when the product of the original variance explained by the omitted confounding is 0.19, the point estimate for ACME would be 0.
+
+```{r,message=FALSE}
+#pdf("Figures/imai-sensR-y2.pdf") 
+#pdf("Figures/imai-sensR-wempathy-y2.pdf") 
+plot(sens2.out, sens.par = "R2", r.type = "total", main = "Sensitivity Analysis on\n Immigration Thermometer", ylim = c(0,0.7),xlim=c(0,1),
+     sign.prod="positive",
+     xlab="Proportion of Total Variance in Empathy\n Explained by Confounder",
+     ylab="Proportion of Total Variance in Immig Thermometer\n Explained by Confounder") # assume confounder influences both mediator/outcome variables in same direction
+#dev.off()
+```
+
+## Mediation analysis (Imai et al. 2013): Emotion regulation
+
+Data clean for mediator variable: emotion regulation
+
+**Immigration Open**
+
+* Model 1: Immigration Open ~ Treatment + Emotion Reg
+* Model 2: Including controls/interactions for empathy score.
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+med1<- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + `Emotion_Reg_Treatment` + `Family_History_Treatment`*`Emotion_Reg_Treatment`, data = d)
+#using mediation not possible here because parallel exp design requires binary variables, which we don't have here, as well as encouragement that is 3 valued (-1,1,0)
+#Randomize_Mediator for whether in Experiment 1 or in Experiment 2
+#In Experiment 2: did you receive randomized mediator, `Emotion_Reg_Treatment`
+# med.d<-data.frame(y1=as.numeric(d$`Immigration-Open-Int`)#d$`Immigration-Open-Int`
+#                   ,y2=as.numeric(d$`Immigration-Therm_1`)
+#                   ,med=d$`Immigration-Empathy-Int`#as.numeric(d$`Emotion_Reg_Treatment`)
+#                   ,med.enc=as.numeric(d$Randomize_Mediator)
+#                   ,treat=d$Family_History_Treatment
+#                   ,empathy=as.numeric(d$empathybattery2)
+#                   ,empathy0=as.numeric(d$empathybattery)
+#                   ,gender=d$gender
+#                   ,age=as.numeric(d$Age)
+#                   ,party=d$partyid2
+#                   ,education=as.numeric(d$educ_int))
+# med.d$med.enc[med.d$med.enc==1&med.d$med==0]<-0#if mediator encouraged 'down' (in this case we don't have a manipulation down), 0 if no encouragement, 1 if encouraged up
+# med.d$med<-ifelse(med.d$med>mean(med.d$med,na.rm=TRUE),1,0)
+# med.d$y1<-ifelse(med.d$y1>=mean(med.d$y1,na.rm=TRUE),1,0)
+# ped<- mediate.ped2(outcome="y1",mediator="med",treat="treat",encourage="med.enc", data=med.d[,c("y1","med","treat","med.enc")])
+# summary(ped)
+# 
+# data("boundsdata", package = "mediation")
+med2<- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + `Emotion_Reg_Treatment` + `Family_History_Treatment`*`Emotion_Reg_Treatment` + empathybattery_s + empathybattery_s*`Family_History_Treatment` + empathybattery_s*`Emotion_Reg_Treatment` + empathybattery_s*`Family_History_Treatment`*`Emotion_Reg_Treatment`, data = d)
+tab_model(med1,med2,dv.labels = c("Model 1", "Model 2"))
+```
+
+**Thermometer**
+
+* Model 1: Thermometer ~ Treatment + Emotion Reg
+* Model 2: Including controls/interactions for empathy score.
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+med1<- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + `Emotion_Reg_Treatment` + `Family_History_Treatment`*`Emotion_Reg_Treatment`, data = d)
+med2<- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + `Emotion_Reg_Treatment` + `Family_History_Treatment`*`Emotion_Reg_Treatment` + empathybattery_s + empathybattery_s*`Family_History_Treatment` + empathybattery_s*`Emotion_Reg_Treatment` + empathybattery_s*`Family_History_Treatment`*`Emotion_Reg_Treatment`, data = d)
+tab_model(med1,med2,dv.labels = c("Model 1", "Model 2"))
+```
+No interaction effects with the mediator.
+
+
+Table export:
+```{r,echo=TRUE,eval=FALSE}
+stargazer(med1,med2,title="",align=TRUE,dep.var.labels=c("Open Immigration", "Immigration Thermometer"),
+covariate.labels=c("(Family History) Treatment","Emotion (Regulation Treatment)",
+"Treatment*Emotion"),
+omit.stat=c("LL","ser","f"), ci=TRUE, ci.level=0.95, single.row=FALSE)
+```
+
+
+
+# HTEs with sociodemographic variables of respondents
+
+## HTE High and Low Empathy
+
+If priming family history improves attitudes toward immigrants by increasing empathy, the treatment may be more effective among respondents predisposed to feel empathy toward others in the first place. Thus, we will use the empathy battery to evaluate whether respondents with higher levels of empathy are more responsive to the treatment. For the empathy battery we will use `empathybattery` which is the scored index of the empathy questions, and `empathybattery2` which is a binary variable for whether the respondent is high empathy (above mean) or low empathy (mean or below).
+
+Sidenote: separately we will utilize principal components analysis (PCA) to identify high
+and low empathy respondents, and we will then interact this binary empathy variable with the the treatment to assess conditional average treatment effects (Gerber and Green 2012). We use the first three principal components.
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+# gather all emp variables for PCA
+emp.vars <-c("emp_2sides2","emp_argument2","emp_calm2","emp_control2","emp_criticize2","emp_daydream2","emp_disagreement2","emp_disturb2","emp_effective2","emp_emergency2","emp_feelsorry2","emp_helpless2","emp_perspective2","emp_pieces2","emp_pity2", "emp_pov2","emp_protective2","emp_scare2","emp_shoes2","emp_soft2","emp_tender2","emp_touched2")
+emp.NA<-unique(unlist(apply(d[,emp.vars],2,function(temp){which(is.na(temp))}))) #index of removed rows
+emp.rows<-c(1:nrow(d))
+emp.rows<-emp.rows[-emp.NA]
+emp.d<-na.omit(d[,emp.vars])
+rownames(emp.d)<-emp.rows
+emp.pca <- prcomp(emp.d,center = TRUE,scale. = TRUE) #I'm using a singular value decomp instead of spectral decomp with princomp -- no particular reason so can always switch if we like, though I prefer the numerical approach
+ #PA1-PA3
+d$emp.pca1<-NA
+d$emp.pca1[emp.rows]<-emp.pca$x[,1]
+d$emp.pca2<-NA
+d$emp.pca2[emp.rows]<-emp.pca$x[,2]
+d$emp.pca3<-NA
+d$emp.pca3[emp.rows]<-emp.pca$x[,3]
+```
+
+**Immigration Open as outcome**
+
+* Model 1: Immigration Open ~ Treatment + empathybattery + Treatment*empathybattery
+* Model 2: Immigration Open ~ Treatment + empathybattery + Treatment*empathybattery + controls
+* Model 3: Immigration Open ~ Treatment + empathy + Treatment*empathy (empathy broken down into: empconc, empdist, empper, emp_daydream)
+* Model 4: Immigration Open ~ Treatment + empathy + Treatment*empathy (empathy with just emp perspective variables)
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+sub1<-lm(`Immigration-Open-Int`~`Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s,d)
+sub2<-lm(`Immigration-Open-Int`~`Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s + ethnocentric + Age + gender + educ + race + partyid2 + isimmigrant,d)
+#with empconc, empdist, empper, emp_daydream
+sub3<-lm(`Immigration-Open-Int`~`Family_History_Treatment` + empconc_scale + empdist_scale + empper_scale + emp_daydream2_scale + `Family_History_Treatment`*empconc_scale +`Family_History_Treatment`*empdist_scale + `Family_History_Treatment`*empper_scale + `Family_History_Treatment`*emp_daydream2_scale,d)
+
+#with just empper variables
+sub4<-lm(`Immigration-Open-Int`~`Family_History_Treatment` + emp_criticize2 + emp_argument2 + emp_perspective2 + emp_2sides2 + emp_shoes2 + emp_disagreement2 + emp_pov2 + `Family_History_Treatment`*emp_perspective2 + `Family_History_Treatment`*emp_shoes2 + `Family_History_Treatment`*emp_pov2 + `Family_History_Treatment`*emp_criticize2 + `Family_History_Treatment`*emp_argument2 + `Family_History_Treatment`*emp_2sides2 + `Family_History_Treatment`*emp_disagreement2,d)
+tab_model(sub1,sub2
+          #,sub3,sub4
+          ,dv.labels=c("Model 1", "Model 2"))#, "Model 3", "Model 4"))
+```
+
+
+**Thermometer as outcome**
+
+* Model 1: Thermometer ~ Treatment + empathybattery + Treatment*empathybattery
+* Model 2: Thermometer ~ Treatment + empathybattery + Treatment*empathybattery + controls
+* Model 3: Thermometer ~ Treatment + empathy + Treatment*empathy (empathy broken down into: empconc, empdist, empper, emp_daydream)
+* Model 4: Thermometer ~ Treatment + empathy + Treatment*empathy (empathy with just emp perspective variables)
+
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+sub1<-lm(`Immigration-Therm_1`~`Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s,d)
+sub2<-lm(`Immigration-Therm_1`~`Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s + ethnocentric + Age + gender + educ + race + partyid2 + isimmigrant,d)
+#with empconc, empdist, empper, emp_daydream
+sub3<-lm(`Immigration-Therm_1`~`Family_History_Treatment` + empconc_scale + empdist_scale + empper_scale + emp_daydream2_scale + `Family_History_Treatment`*empconc_scale +`Family_History_Treatment`*empdist_scale + `Family_History_Treatment`*empper_scale + `Family_History_Treatment`*emp_daydream2_scale,d)
+
+#with just empper variables
+sub4<-lm(`Immigration-Therm_1`~`Family_History_Treatment` + emp_criticize2 + emp_argument2 + emp_perspective2 + emp_2sides2 + emp_shoes2 + emp_disagreement2 + emp_pov2 + `Family_History_Treatment`*emp_perspective2 + `Family_History_Treatment`*emp_shoes2 + `Family_History_Treatment`*emp_pov2 + `Family_History_Treatment`*emp_criticize2 + `Family_History_Treatment`*emp_argument2 + `Family_History_Treatment`*emp_2sides2 + `Family_History_Treatment`*emp_disagreement2,d)
+#tab_model(sub1,sub2,sub3,sub4,dv.labels=c("Model 1", "Model 2", "Model 3", "Model 4"))
+tab_model(sub1,sub2
+          #,sub3,sub4
+          ,dv.labels=c("Model 1", "Model 2"))#, "Model 3", "Model 4"))
+```
+
+```{r,echo=FALSE,eval=FALSE}
+sub1<-lm(`Immigration-Open-Int`~`Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s,d)
+sub2<-lm(`Immigration-Therm_1`~`Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s,d)
+stargazer(sub1,sub2,title="by baseline Empathy",align=TRUE,dep.var.labels=c("Open Immigration", "Immigration Thermometer"),
+covariate.labels=c("(Family History) Treatment","Baseline Empathy","Treatment*Baseline Empathy"),
+omit.stat=c("LL","ser","f"), ci=TRUE, ci.level=0.95, single.row=FALSE)
+```
+
+Second principal component of respondent empathy measure seems to have a positive interaction effect on the immigration thermometer outcome. What that makes me wonder, given that the other two components are negatively correlated with the outcome, and have no interaction effects, and given the orthogonality of the components, is whether empathy can be split into dimensions that are for ingroup and outgroup; perhaps the second dimension precisely picks up on the outgroup while the first primary component is for ingroup?
+
+What are the empathy battery variables that most correlate with component 2? Use the loadings to compute the correlations between the empathy battery questions and the components. Note direction of correlation doesn't matter, just magnitude, so I'm taking absolute values of the loadings.
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+# Contributions of variables on PC2
+tmp<-data.frame(y=sort(abs(emp.pca$rotation[,2]),decreasing=TRUE) , x=names(sort(abs(emp.pca$rotation[,2]),decreasing=TRUE)))
+# Reorder following the value of another column:
+tmp %>%
+  mutate(name = fct_reorder(x, y)) %>%
+  ggplot( aes(x=name, y=y)) +
+    geom_bar(stat="identity", fill="tomato2", alpha=.9, width=.5) +
+    coord_flip() +
+    xlab("") + ylab("Correlation with principal component 2") +
+    theme_bw()
+```
+
+Control, pieces, emergency, scare and helpless are the variables that correlate highest with the second principal component. What about for PC 1?
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+# Contributions of variables on PC2
+tmp<-data.frame(y=sort(abs(emp.pca$rotation[,1]),decreasing=TRUE) , x=names(sort(abs(emp.pca$rotation[,1]),decreasing=TRUE)))
+# Reorder following the value of another column:
+tmp %>%
+  mutate(name = fct_reorder(x, y)) %>%
+  ggplot( aes(x=name, y=y)) +
+    geom_bar(stat="identity", fill="royalblue2", alpha=.9, width=.5) +
+    coord_flip() +
+    xlab("") + ylab("Correlation with principal component 1") +
+    theme_bw()
+```
+
+Perspective, tender, protective and disagreement are the variables that correlate highest with the first principal component.
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+sub1<-lm(`Immigration-Open-Int`~`Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s,d)
+sub2<-lm(`Immigration-Therm_1`~`Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s,d)
+tab_model(sub1,sub2,dv.labels = c("Immigration Open","Thermometer"))
+```
+
+
+## HTE Race
+
+If priming family history improves attitudes toward immigrants by increasing empathy, the treatment may be more effective among respondents of different race (non-white). Baseline race category is White.
+
+* Model 1: Immigration Open ~ Treatment + race + Treatment*race
+* Model 2: Immigration Open ~ Treatment + race + Treatment*race + controls
+* Model 3: Thermometer ~ Treatment + race + Treatment*race
+* Model 4: Thermometer ~ Treatment + race + Treatment*race + controls
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+sub1<-lm(`Immigration-Open-Int`~`Family_History_Treatment` + race + `Family_History_Treatment`*race,d)
+sub2<-lm(`Immigration-Open-Int`~`Family_History_Treatment` + race + `Family_History_Treatment`*race + ethnocentric + Age + gender + educ + partyid + isimmigrant,d)
+sub3<-lm(`Immigration-Therm_1`~`Family_History_Treatment` + race + `Family_History_Treatment`*race,d)
+sub4<-lm(`Immigration-Therm_1`~`Family_History_Treatment` + race + `Family_History_Treatment`*race + ethnocentric + Age + gender + educ + partyid + isimmigrant,d)
+tab_model(sub1,sub2,sub3,sub4,dv.labels=c("Model 1: Immig Open", "Model 2: Immig Open", "Model 3: Therm", "Model 4: Therm"))
+```
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+#LaTex table
+texreg(list(sub1,sub2,sub3,sub4),label="tab:subgrouprace"
+       ,caption = "Subgroup analysis, race"
+       ,float.pos = "h", return.string = TRUE, bold = 0.05, stars = 0
+       ,custom.note = "Coefficients with $p < 0.05$ in \\textbf{bold}."
+       ,digits = 3, leading.zero = FALSE, omit.coef ="(Age)|(gender)|(ethnocentric)|(educ)|(partyid)|(isimmigrant)")
+```
+
+## HTE: Trump approval
+
+As noted in our PAP, prejudice reduction interventions are particularly interested in changing the attitudes of individuals predisposed to prejudiced views. As such, we examine heterogeneous effects among one subgroup that is particularly likely to hold more hostile attitudes
+toward immigrants: Trump supporters (Jones 2019).
+
+* Model 1: Immigration Open ~ Treatment + Trump Approver + Treatment*Trump Approver
+* Model 2: Thermometer ~ Treatment + Trump Approver + Treatment*Trump Approver
+* Model 3: Immigration Empathy ~ Treatment + Trump Approver + Treatment*Trump Approver
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+het1 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + trumpapproval2 + `Family_History_Treatment`*trumpapproval2, data = d)
+het2 <- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + trumpapproval2 + `Family_History_Treatment`*trumpapproval2, data = d)
+het3 <- lm(`Immigration-Empathy-Int` ~ `Family_History_Treatment` + trumpapproval2 + `Family_History_Treatment`*trumpapproval2, data = d)
+tab_model(het1,het2,het3,dv.labels=c("Model 1: Immig Open","Model 2: Thermometer","Model 3: Immig Empathy"))
+```
+
+[No heterogeneous treatment effect of family history treatment and Trump Approval on either outcome. Note however that Trump Approval is negatively associated with outcomes.]{color="royalblue2"}
+
+## HTE: Ideology
+
+We further consider whether there are heterogeneous effects among people with different ideologies.
+
+
+* Model 1: Immigration Open ~ Treatment + Ideology + Treatment*Ideology
+* Model 2: Thermometer ~ Treatment + Ideology + Treatment*Ideology
+* Model 3: Immigration Empathy ~ Treatment + Ideology + Treatment*Ideology
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+het1 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + ideo + `Family_History_Treatment`*ideo, data = d)
+het2 <- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + ideo + `Family_History_Treatment`*ideo, data = d)
+het3 <- lm(`Immigration-Empathy-Int` ~ `Family_History_Treatment` + ideo + `Family_History_Treatment`*ideo, data = d)
+tab_model(het1,het2,het3,dv.labels = c("Immigration Open","Thermometer","Immigration Empathy"))
+```
+
+
+## HTE: Party ID
+
+We further consider whether there are heterogeneous effects among people with different ideologies.
+
+**Immigration Open**
+
+* Model 1: Immigration Open ~ Treatment + Party + Treatment*Party (3 categ scale, Indep as baseline)
+* Model 2:  Immigration Open ~ Treatment + Party + Treatment*Party (7 categ scale, Indep as baseline)
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+het1 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + partyid2 + `Family_History_Treatment`*partyid2 + Age + educ + race + empathybattery_s, data = d)
+het2 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + partyid + `Family_History_Treatment`*partyid + Age + educ + race + empathybattery_s, data = d)
+tab_model(het1,het2,dv.labels = c("Model 1","Model 2"))
+```
+
+[Identifying as a Democrat interacts with the family history treatment negatively on the immigration open outcome, compared to the baseline of Independents.]{color="royalblue2"}
+
+**Thermometer**
+
+* Model 1: Thermometer ~ Treatment + Party + Treatment*Party (3 categ scale, Indep as baseline)
+* Model 2:  Thermometer ~ Treatment + Party + Treatment*Party (7 categ scale, Indep as baseline)
+
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+het1 <- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + partyid2 + `Family_History_Treatment`*partyid2 + Age + educ + race + empathybattery_s, data = d)
+het2 <- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + partyid + `Family_History_Treatment`*partyid + Age + educ + race + empathybattery_s, data = d)
+tab_model(het1,het2,dv.labels = c("Model 1","Model 2"))
+```
+
+No interaction effect of partyid with treatment on immigration thermometer outcome.
+
+**Immigration Empathy**
+
+* Model 1: Immigration Empathy ~ Treatment + Party + Treatment*Party (7 categ scale, Indep as baseline)
+* Model 2:  Immigration Empathy ~ Treatment + Party + Treatment*Party (3 categ scale, Indep as baseline)
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+het1 <- lm(`Immigration-Empathy-Int` ~ `Family_History_Treatment` + partyid + `Family_History_Treatment`*partyid, data = d)
+het2 <- lm(`Immigration-Empathy-Int` ~ `Family_History_Treatment` + partyid2 + `Family_History_Treatment`*partyid2, data = d)
+tab_model(het1,het2,dv.labels = c("Model 1","Model 2"))
+```
+
+
+
+# Text descriptions of family history
+
+```{r,echo=FALSE, eval=FALSE, warning=FALSE}
+#openendedbytreatment_CLA-AL-coding_HPiA.csv --handcoded variables
+open.ended<-read.csv("openendedbytreatment_CLA-AL-coding_HPiA.csv") #match back on rownames with d
+row_order<-match(rownames(d),open.ended$X)
+open.ended<-open.ended[row_order,]
+open.ended$Partisan.priming[which(open.ended$Partisan.priming=="na")]<-NA
+open.ended$Partisan.priming<-factor(open.ended$Partisan.priming)
+open.ended$Coerced[which(open.ended$Coerced=="na")]<-NA
+open.ended$Coerced<-factor(open.ended$Coerced)
+open.ended$Imm_reason_text<-tolower(open.ended$Imm_reason_text)
+#create auto versions of the variables: Partisan.priming, Coerced (? what is coerced??), "Family1_vs_NoFamily0", "Slavery1_vs_NoSlavery0","uncontrolled_circumstances"
+#we can directly use: "Native1_vs_NoNative0", "Nonsense" as they are fewer and handcoded pretty well
+## Partisan.priming
+partisan_words<-c("legally","legal","properly")
+Imm_reason_text<-unlist(lapply(open.ended$Imm_reason_text,function(x){any(str_contains(x,pattern=partisan_words))}))
+open.ended$Partisan.priming_auto<-ifelse(Imm_reason_text,1,ifelse(is.na(open.ended$Imm_reason_text),NA,0))
+## Family
+family_words<-c("mom","mother","dad","father","parents","grandma", "grandmother","grandpa","grandfather", "grandparents","my great", "family came", "family escaped","my family", "brother","sister","married","husband","wife","fiance","great-great","one side")
+Imm_reason_text_family<-unlist(lapply(open.ended$Imm_reason_text,function(x){any(str_contains(x,pattern=family_words))}))
+open.ended$Family1_vs_NoFamily0_auto<-ifelse(Imm_reason_text_family,1,ifelse(is.na(open.ended$Imm_reason_text),NA,0))
+## Slavery
+slavery_words<-c("slav", "slave", "slaves", "slavery", "enslav", "kidnap","indentur")
+Imm_reason_text_blacknative<-unlist(lapply(open.ended$Imm_reason_text,function(x){any(str_contains(x,pattern=slavery_words))}))
+open.ended$Slavery1_vs_NoSlavery0_auto<-ifelse(Imm_reason_text_blacknative,1,ifelse(is.na(open.ended$Imm_reason_text),NA,0))
+## uncontrolled_circumstances
+uncontrolled_circumstances_words<-c("war","persecut","ww1","ww2","pogroms","communism","coup","revolution","violen","famin","potato","cassocks","hitler","nazi","discrim","jew","refugee") #potato famine
+Imm_reason_text_uncontrolled<-unlist(lapply(open.ended$Imm_reason_text,function(x){any(str_contains(x,pattern=uncontrolled_circumstances_words))}))
+open.ended$uncontrolled_circumstances<-ifelse(Imm_reason_text_uncontrolled,1,ifelse(is.na(open.ended$Imm_reason_text),NA,0))
+## Sentiment done separately on "Negative.1_Neutral0_Positive1",
+sentiment<-analyzeSentiment(as.character(open.ended$Imm_reason_text))
+open.ended$sentiment<-convertToDirection(sentiment$SentimentQDAP)
+open.ended$sentiment_n<-ifelse(open.ended$sentiment=="positive",1,
+                               ifelse(open.ended$sentiment=="neutral",0,
+                                      ifelse(open.ended$sentiment=="negative",-1,NA)))
+#pull in other necessary variables:
+open.ended$`Immigration-Open-Int`<-d$`Immigration-Open-Int`
+open.ended$`Immigration-Therm_1`<-d$`Immigration-Therm_1`
+open.ended$empathybattery_s<-d$empathybattery_s
+open.ended$emotionbattery_s<-d$emotionbattery_s
+open.ended$partyid2<-d$partyid2
+open.ended$race<-d$race
+open.ended$gender<-d$gender
+open.ended$age<-d$Age
+open.ended$educ<-d$educ
+open.ended$`Immigration-Therm_1_n`<-d$`Immigration-Therm_1_n`
+saveRDS(open.ended,file="open_ended_cleaned.rds")
+```
+
+## Text descriptions of family history
+
+What are respondents saying about their family immigration histories?
+
+```{r,echo=FALSE,eval=TRUE}
+open.ended<-readRDS("open_ended_cleaned.rds")
+## word-table
+dtm1<-dfm(open.ended$Imm_reason_text,stem=TRUE,remove_punct=TRUE,remove=stopwords("english"))
+dtm1<-dfm_trim(dtm1,min_termfreq=3)#remove rare terms
+wordcloud(colnames(dtm1),freq=colSums(dtm1,na.rm=TRUE), max.words=200
+          ,col=wes_palette("Darjeeling1", ncol(dtm1),type ="continuous"), main="High Thermometer"
+          ,use.r.layout=TRUE)
+#wordcloud.pdf
+```
+
+The most frequently used words are positive in tone, surrounding opportunities and family. 
+
+### Comparison of texts produced by respondents
+
+What are the kinds of word tokens are people who rate immigrants high vs low likely to use?
+
+Plot the results of a "keyword" of features comparing their differential associations with a target and a reference group, after calculating "keyness", a score for features that occur differentially across different categories. We're going to use "high thermometer" vs "low thermometer" ratings as the different categories (`Immigration-Therm_1_n`).
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+## word-table
+imm_text<-open.ended[,c("Imm_reason_text","Immigration-Therm_1_n")]
+imm_dtm<-dfm(imm_text$Imm_reason_text,groups=as.factor(ifelse(imm_text$`Immigration-Therm_1_n`==1,"High Thermometer","Low Thermometer"))
+             ,stem=TRUE,remove_punct=TRUE,remove=stopwords("english"))
+imm_dtm<-dfm_trim(imm_dtm,min_termfreq=3)#remove rare terms
+## compare target Therm H group to rest of dtm (Therm L)
+keyness=textstat_keyness(imm_dtm,target="High Thermometer")
+textplot_keyness(
+  keyness,
+  show_reference = TRUE,
+  show_legend = TRUE,
+  n = 20L,
+  min_count = 2L,
+  margin = 0.05,
+  color = c("darkblue", "gray"),
+  labelcolor = "gray30",
+  labelsize = 4,
+  font = NULL
+)
+#keyness_familytext.pdf
+```
+
+What about specifically for people in the treatment group (received thermometer rating question *after* family history question)?
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+open.ended<-readRDS("open_ended_cleaned.rds")
+## word-table
+imm_text<-open.ended[which(open.ended$Family_History_Treatment==1),c("Imm_reason_text","Immigration-Therm_1_n")]
+imm_dtm<-dfm(imm_text$Imm_reason_text,groups=as.factor(ifelse(imm_text$`Immigration-Therm_1_n`==1,"High Thermometer","Low Thermometer"))
+             ,stem=TRUE,remove_punct=TRUE,remove=stopwords("english"))
+imm_dtm<-dfm_trim(imm_dtm,min_termfreq=3)#remove rare terms
+## compare target Therm H group to rest of dtm (Therm L)
+keyness=textstat_keyness(imm_dtm,target="High Thermometer")
+textplot_keyness(
+  keyness,
+  show_reference = TRUE,
+  show_legend = TRUE,
+  n = 20L,
+  min_count = 2L,
+  margin = 0.05,
+  color = c("darkblue", "gray"),
+  labelcolor = "gray30",
+  labelsize = 4,
+  font = NULL
+)
+#keyness_familytext_treated.pdf
+```
+<!-- Word cloud -->
+
+```{r,echo=FALSE,eval=FALSE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+freq0 = data.frame(freqency=sort(as.matrix(imm_dtm)[1,], decreasing=TRUE))
+layout(matrix(c(1,2), nrow=2), heights=c(0.5, 6))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "High Thermometer",cex=2.5,col="gray30")
+wordcloud(rownames(freq0), freq0[,1], max.words=200
+          ,col=wes_palette("Darjeeling1", nrow(freq0),type ="continuous"), main="High Thermometer"
+          ,use.r.layout=TRUE)
+##terrain.colors(nrow(freq0) 
+#wordcloud_thermH.pdf
+```
+
+```{r,echo=FALSE,eval=FALSE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+#png("wordcloud_treatment.png", width=12,height=8, units='in', res=300)
+freq1 = data.frame(freqency=sort(as.matrix(imm_dtm)[2,], decreasing=TRUE))
+layout(matrix(c(1,2), nrow=2), heights=c(0.5, 6))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "Low Thermometer",cex=2.5,col="gray30")
+wordcloud(rownames(freq1), freq1[,1], max.words=200
+          ,col=wes_palette("Zissou1", nrow(freq1),type ="continuous"), main="Low Thermometer")
+##wordcloud_thermL.pdf
+```
+
+### Cross tabs, types of text
+
+**Handcoded Partisan Priming variable**
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+set.seed(772020)
+#draw samples
+tmp<-na.omit(open.ended[,c("Imm_reason_text","Family_History_Treatment","Partisan.priming")])
+x<-sample(tmp$Imm_reason_text[tmp$Partisan.priming==0],1)
+y<-sample(tmp$Imm_reason_text[tmp$Partisan.priming==1],1)
+tmp<-table(open.ended$Partisan.priming)
+kable(data.frame(`Non Partisan Text`=c(round(prop.table(tmp),3)[1],tmp[1],x),`Partisan Text`=c(round(prop.table(tmp),3)[2],tmp[2],y),row.names=c("Proportion","N","Example")),caption="Partisan text")%>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)
+```
+
+
+```{r,echo=FALSE,eval=FALSE, warning=FALSE, message=FALSE}
+#LaTeX version
+kable(data.frame(`Non Partisan Text`=c(round(prop.table(tmp),3)[1],tmp[1],x),`Partisan Text`=c(round(prop.table(tmp),3)[2],tmp[2],y),row.names=c("Proportion","N","Example"))
+      , caption = "Partisan text","latex",booktabs=T) %>%
+  kable_styling(latex_options=c("striped","hold_position"),full_width=F,font_size=12)%>%
+  #footnote(general = "")%>%
+  column_spec(1, bold = T, width = "5em")%>%
+  column_spec(2, width = "10em")%>%
+  column_spec(3, width = "15em")%>%
+  row_spec(0, bold = T)
+```
+
+**Handcoded Slavery variable**
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+set.seed(772020)
+#draw samples
+tmp<-na.omit(open.ended[,c("Imm_reason_text","Family_History_Treatment","Slavery1_vs_NoSlavery0")])
+x<-sample(tmp$Imm_reason_text[tmp$Slavery1_vs_NoSlavery0==0],1)
+y<-sample(tmp$Imm_reason_text[tmp$Slavery1_vs_NoSlavery0==1],1)
+tmp<-table(open.ended$Slavery1_vs_NoSlavery0)
+kable(data.frame(`Non Slavery Text`=c(round(prop.table(tmp),3)[1],tmp[1],x),`Slavery Text`=c(round(prop.table(tmp),3)[2],tmp[2],y),row.names=c("Proportion","N","Example")),caption="Slavery text")%>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)
+```
+
+
+```{r,echo=FALSE,eval=FALSE, warning=FALSE, message=FALSE}
+#LaTeX version
+kable(data.frame(`Non Slavery Text`=c(round(prop.table(tmp),3)[1],tmp[1],x),`Slavery Text`=c(round(prop.table(tmp),3)[2],tmp[2],y),row.names=c("Proportion","N","Example"))
+      , caption = "Slavery text","latex",booktabs=T) %>%
+  kable_styling(latex_options=c("striped","hold_position"),full_width=F,font_size=12)%>%
+  #footnote(general = "")%>%
+  column_spec(1, bold = T, width = "5em")%>%
+  column_spec(2, width = "10em")%>%
+  column_spec(3, width = "15em")%>%
+  row_spec(0, bold = T)
+```
+
+
+**Uncontrolled circumstances variable**
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+set.seed(772020)
+#draw samples
+tmp<-na.omit(open.ended[,c("Imm_reason_text","Family_History_Treatment","uncontrolled_circumstances")])
+x<-sample(tmp$Imm_reason_text[tmp$uncontrolled_circumstances==0],1)
+y<-sample(tmp$Imm_reason_text[tmp$uncontrolled_circumstances==1],1)
+tmp<-table(open.ended$uncontrolled_circumstances)
+kable(data.frame(`Non Uncontrolled Circumstances`=c(round(prop.table(tmp),3)[1],tmp[1],x),`Uncontrolled Circumstances `=c(round(prop.table(tmp),3)[2],tmp[2],y),row.names=c("Proportion","N","Example")),caption="Uncontrolled circumstances text")%>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)
+```
+
+
+```{r,echo=FALSE,eval=FALSE, warning=FALSE, message=FALSE}
+#LaTeX version
+kable(data.frame(`Non Uncontrolled Circumstance`=c(round(prop.table(tmp),3)[1],tmp[1],x),`Uncontrolled Circumstance`=c(round(prop.table(tmp),3)[2],tmp[2],y),row.names=c("Proportion","N","Example"))
+      , caption = "Uncontrolled Circumstance text","latex",booktabs=T) %>%
+  kable_styling(latex_options=c("striped","hold_position"),full_width=F,font_size=12)%>%
+  #footnote(general = "")%>%
+  column_spec(1, bold = T, width = "5em")%>%
+  column_spec(2, width = "10em")%>%
+  column_spec(3, width = "15em")%>%
+  row_spec(0, bold = T)
+```
+
+**Handcoded Native variable**
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+set.seed(762020)
+#draw samples
+tmp<-na.omit(open.ended[,c("Imm_reason_text","Family_History_Treatment","Native1_vs_NoNative0")])
+x<-sample(tmp$Imm_reason_text[tmp$Native1_vs_NoNative0==0],1)
+y<-sample(tmp$Imm_reason_text[tmp$Native1_vs_NoNative0==1],1)
+tmp<-table(open.ended$Native1_vs_NoNative0)
+kable(data.frame(`Non Native Text`=c(round(prop.table(tmp),3)[1],tmp[1],x),`Native Text`=c(round(prop.table(tmp),3)[2],tmp[2],y),row.names=c("Proportion","N","Example")),caption="Native text")%>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)
+
+```
+
+```{r,echo=FALSE,eval=FALSE, warning=FALSE, message=FALSE}
+#LaTeX version
+kable(data.frame(`Non Nativeness text`=c(round(prop.table(tmp),3)[1],tmp[1],x),`Nativeness text`=c(round(prop.table(tmp),3)[2],tmp[2],y),row.names=c("Proportion","N","Example"))
+      , caption = "Nativeness text","latex",booktabs=T) %>%
+  kable_styling(latex_options=c("striped","hold_position"),full_width=F,font_size=12)%>%
+  #footnote(general = "")%>%
+  column_spec(1, bold = T, width = "5em")%>%
+  column_spec(2, width = "10em")%>%
+  column_spec(3, width = "15em")%>%
+  row_spec(0, bold = T)
+```
+
+**Autocoded Sentiment variable**
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+set.seed(6302020)
+#draw samples
+tmp<-na.omit(open.ended[,c("Imm_reason_text","Family_History_Treatment","sentiment")])
+x<-sample(tmp$Imm_reason_text[tmp$sentiment=="negative"],1)
+y<-sample(tmp$Imm_reason_text[tmp$sentiment=="neutral"],1)
+z<-sample(tmp$Imm_reason_text[tmp$sentiment=="positive"],1)
+tmp<-table(open.ended$sentiment)
+kable(data.frame(Negative=c(round(prop.table(tmp),3)[1],tmp[1],x)
+                 ,Neutral=c(round(prop.table(tmp),3)[2],tmp[2],y)
+                 ,Positive=c(round(prop.table(tmp),3)[3],tmp[3],z)
+                 ,row.names=c("Proportion","N","Example")),caption="Sentiment text")%>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)
+```
+
+```{r,echo=FALSE,eval=FALSE, warning=FALSE, message=FALSE}
+#LaTeX version
+kable(data.frame(Negative=c(round(prop.table(tmp),3)[1],tmp[1],x)
+                 ,Neutral=c(round(prop.table(tmp),3)[2],tmp[2],y)
+                 ,Positive=c(round(prop.table(tmp),3)[3],tmp[3],z)
+                 ,row.names=c("Proportion","N","Example"))
+      , caption = "Sentiment text","latex",booktabs=T) %>%
+  kable_styling(latex_options=c("striped","hold_position"),full_width=F,font_size=12)%>%
+  #footnote(general = "")%>%
+  column_spec(1, bold = T, width = "5em")%>%
+  column_spec(2, width = "12em")%>%
+  column_spec(3, width = "10em")%>%
+  column_spec(4, width = "10em")%>%
+  row_spec(0, bold = T)
+
+#LaTeX version
+  #add in sample sizes in each cell by hand in latex code
+#proportions
+kable(round(prop.table(tmp),3), caption = "Sentiment text","latex",booktabs=T) %>%
+  kable_styling(latex_options=c("striped","hold_position"),full_width=F,font_size=12)%>%
+  footnote(general = "Proportions presented, sample sizes in parentheses.")%>%
+  column_spec(1, bold = T)%>%
+  row_spec(0, bold = T)
+#text examples
+kable(data.frame(`Negative Text`=c(a,b),`Neutral Text`=c(x,z),`Positive Text`=c(y,w),row.names=c("Control","Treatment")),caption="Sentiment text examples","latex",booktabs=T)%>%
+  kable_styling(latex_options=c("hold_position"),full_width=F,font_size=10)%>%
+  column_spec(1, bold = T, width = "5em")%>%
+  column_spec(2, width = "10em")%>%
+  column_spec(3, width = "10em")%>%
+  column_spec(4, width = "10em")%>%
+  row_spec(0, bold = T)
+```
+
+How is the sentiment of the text correlated with the thermometer outcome? We break this down into treatment and control groups (as treatment received thermometer after family history questions, and control received thermometer before).
+
+**barplots by treatment/control of sentiment vs thermometer**
+
+```{r, echo=FALSE,eval=TRUE,message=FALSE,warning=FALSE}
+plotdata<-na.omit(data.frame(Treatment=ifelse(open.ended$Family_History_Treatment==1,"Treatment",
+                                      ifelse(open.ended$Family_History_Treatment==0,"Control",NA))
+                                      ,Thermometer=open.ended$`Immigration-Therm_1`
+           ,Text=open.ended$Imm_reason_text,Sentiment=open.ended$sentiment))
+# Grouped
+p<-plotdata %>%
+  mutate(Sentiment = fct_reorder(Sentiment, Thermometer)) %>%
+  mutate(Sentiment = factor(Sentiment, levels=c("negative","neutral","positive"))) %>%
+  ggplot(aes(fill=Treatment, y=Thermometer, x=Sentiment)) + 
+    #geom_violin(position="dodge", alpha=0.5, outlier.colour="transparent") +
+    geom_boxplot(position="dodge",color="gray20", alpha=0.70) +
+    geom_point(pch = 21, position = position_jitterdodge(jitter.width=0.05), size=0.5, alpha=0.5) +
+    scale_fill_viridis(discrete=T, name="", begin=0.5, end=1,option="E") +
+    theme_bw()  +
+    xlab("Sentiment") +
+    ylab("Thermometer") +
+    ylim(0,100)
+p
+#text_sentiment_therm_bar.pdf
+#ggsave(file="Figures/text_sentiment_therm_bar.pdf",p,width=5, height=6)
+```
+
+**regression by treatment/control of sentiment vs thermometer**
+```{r, echo=FALSE,eval=TRUE,message=FALSE,warning=FALSE}
+plotdata<-na.omit(data.frame(Treatment=ifelse(open.ended$Family_History_Treatment==1,"Treatment",
+                                      ifelse(open.ended$Family_History_Treatment==0,"Control",NA))
+                                      ,Thermometer=open.ended$`Immigration-Therm_1`
+           ,Text=open.ended$Imm_reason_text,Sentiment=open.ended$sentiment_n))
+plotdata %>%
+  mutate(Treatment = fct_reorder(Treatment, Thermometer)) %>%
+  #mutate(Sentiment = factor(Sentiment, levels=c("negative","neutral","positive"))) %>%
+ggplot(aes(fill=Treatment, y=Thermometer, x=Sentiment)) +
+  #geom_point(pch = 21, size=0.5, alpha=0.5) +
+  geom_jitter(pch=21, size=0.5, alpha=0.5, position="jitter") + #, width=0.05) + #
+  geom_smooth(method="lm",se=TRUE, color="gray50") +
+  scale_fill_viridis(discrete=T, name="",alpha=0.8, begin=0.5, end=1,option="E") +
+  theme_bw() +
+  xlab("Sentiment") +
+  xlim(-1,1 )+
+  ylab("Thermometer") +
+  ylim(0,100)
+#text_sentiment_therm_lm.pdf
+#summary(lm(Thermometer~Sentiment,data=subset(plotdata,Treatment=="Treatment")))
+#summary(lm(Thermometer~Sentiment,data=subset(plotdata,Treatment=="Control")))
+#summary(lm(Thermometer ~ Treatment + Sentiment + Treatment*Sentiment,data=plotdata))
+```
+
+Correlation between sentiment and thermometer is `r round(cor(plotdata$Sentiment,plotdata$Thermometer),3)`; within treatment respondents `r round(cor(plotdata$Sentiment[plotdata$Treatment=="Treatment"],plotdata$Thermometer[plotdata$Treatment=="Treatment"]),3)` while within control respondents `r round(cor(plotdata$Sentiment[plotdata$Treatment=="Control"],plotdata$Thermometer[plotdata$Treatment=="Control"]),3)`
+#### Other vars
+
+**Handcoded Sentiment variable**
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+set.seed(6292020)
+#draw samples
+tmp<-na.omit(open.ended[,c("Imm_reason_text","Family_History_Treatment","Negative.1_Neutral0_Positive1")])
+# Control-Partisan0, #Control-Partisan1, #Treatment-Partisan0, #Treatment-Partisan1
+a<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==0&tmp$Negative.1_Neutral0_Positive1==-1],1)
+x<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==0&tmp$Negative.1_Neutral0_Positive1==0],1)
+y<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==0&tmp$Negative.1_Neutral0_Positive1==1],1)
+
+b<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==1&tmp$Negative.1_Neutral0_Positive1==-1],1)
+z<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==1&tmp$Negative.1_Neutral0_Positive1==0],1)
+w<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==1&tmp$Negative.1_Neutral0_Positive1==1],1)
+
+kable(data.frame(`Negative Text`=c(a,b),`Neutral Text`=c(x,z),`Positive Text`=c(y,w),row.names=c("Control","Treatment")),caption="Sentiment text examples")%>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)
+
+tmp<-table(ifelse(open.ended$Family_History_Treatment==1,"Treatment","Control"),open.ended$Negative.1_Neutral0_Positive1)
+kable(tmp, caption = "Sentiment: Negative, Neutral, Positive") %>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)%>%
+  footnote(general = "Row: Treatment Status, Col: Sentiment")
+```
+
+**Autocoded Slavery variable**
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+set.seed(6292020)
+#draw samples
+tmp<-na.omit(open.ended[,c("Imm_reason_text","Family_History_Treatment","Slavery1_vs_NoSlavery0_auto")])
+# Control-Partisan0, #Control-Partisan1, #Treatment-Partisan0, #Treatment-Partisan1
+x<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==0&tmp$Slavery1_vs_NoSlavery0_auto==0],1)
+y<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==0&tmp$Slavery1_vs_NoSlavery0_auto==1],1)
+z<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==1&tmp$Slavery1_vs_NoSlavery0_auto==0],1)
+w<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==1&tmp$Slavery1_vs_NoSlavery0_auto==1],1)
+
+kable(data.frame(`Slavery Text`=c(y,w),`NonSlavery Text`=c(x,z),row.names=c("Control","Treatment")),caption="Slavery text examples")%>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)
+
+tmp<-table(ifelse(open.ended$Family_History_Treatment==1,"Treatment","Control"),open.ended$Slavery1_vs_NoSlavery0_auto)
+kable(tmp, caption = "Slavery language") %>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)%>%
+  footnote(general = "Row: Treatment Status, Col: Slavery language used")
+```
+
+**Handcoded Family language variable**
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+set.seed(6292020)
+#draw samples
+tmp<-na.omit(open.ended[,c("Imm_reason_text","Family_History_Treatment","Family1_vs_NoFamily0")])
+# Control-Partisan0, #Control-Partisan1, #Treatment-Partisan0, #Treatment-Partisan1
+x<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==0&tmp$Family1_vs_NoFamily0==0],1)
+y<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==0&tmp$Family1_vs_NoFamily0==1],1)
+z<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==1&tmp$Family1_vs_NoFamily0==0],1)
+w<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==1&tmp$Family1_vs_NoFamily0==1],1)
+
+kable(data.frame(`Family Text`=c(y,w),`NonFamily Text`=c(x,z),row.names=c("Control","Treatment")),caption="Family text examples")%>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)
+
+tmp<-table(ifelse(open.ended$Family_History_Treatment==1,"Treatment","Control"),open.ended$Family1_vs_NoFamily0)
+kable(tmp, caption = "Family language used") %>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)%>%
+  footnote(general = "Row: Treatment Status, Col: Family language used")
+```
+
+
+**Handcoded Coerced variable**
+
+```{r,echo=FALSE,eval=TRUE, warning=FALSE, message=FALSE, fig.height=8, fig.width=10}
+set.seed(6292020)
+#draw samples
+tmp<-na.omit(open.ended[,c("Imm_reason_text","Family_History_Treatment","Coerced")])
+# Control-Partisan0, #Control-Partisan1, #Treatment-Partisan0, #Treatment-Partisan1
+x<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==0&tmp$Coerced==0],1)
+y<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==0&tmp$Coerced==1],1)
+z<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==1&tmp$Coerced==0],1)
+w<-sample(tmp$Imm_reason_text[tmp$Family_History_Treatment==1&tmp$Coerced==1],1)
+
+kable(data.frame(`Coerced Text`=c(y,w),`NonCoerced Text`=c(x,z),row.names=c("Control","Treatment")),caption="Coerced text examples")%>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)
+
+
+tmp<-table(ifelse(open.ended$Family_History_Treatment==1,"Treatment","Control"),open.ended$Coerced)
+kable(tmp, caption = "Coerced") %>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F)%>%
+  footnote(general = "Row: Treatment Status, Col: Coerced")
+```
+
+## Perspective taking Mechanisms using text var
+
+[This section specifically focuses on mechanism tests from the shared googledoc (for R&R purposes.) ]{color="royalblue2"}
+
+Family Immigration Reason: text open-ended outcome
+
+
+
+### Mechanism: Parallel Empathy
+
+* **Description**: Taking perspective leads to same feelings of anger, fear, etc. that targeted groups go through,causing attitude change
+* **Relation to Prime**: Reflecting on family leads to feelings of hope or fear that motivated immigration, causing attitude change
+* **Outcome**: Thermometer
+* Possible tests
+  - Model 1: Treatment interaction with baseline empathy (`empathybattery_s`)
+  - Model 2: Treatment interaction with emotion regulation score
+  - Model 3: The more you know your family history, the more you should feel parallel empathy and improve attitudes: look for interaction between (non-partisan) explanations of immigration and treatment. I'm interpreting this as talking about Family (`Immig_reason_text` coded for family, `Family1_vs_NoFamily0_auto` variable) or Not -- interacted with the treatment
+  - Model 4: Talking about `Immig_reason_text`in a negative `sentiment` and talking about family, interacted with treatment
+
+```{r,echo=FALSE,eval=TRUE,warning=FALSE}
+#+ race + gender + age + educ #controls
+open.ended<-readRDS(file="open_ended_cleaned.rds")
+m1<-lm(`Immigration-Therm_1`~ Family_History_Treatment + empathybattery_s + Family_History_Treatment*empathybattery_s + partyid2,data=open.ended)
+m2<-lm(`Immigration-Therm_1`~ Family_History_Treatment + emotionbattery_s + Family_History_Treatment*emotionbattery_s,data=open.ended)
+m3<-lm(`Immigration-Therm_1`~ Family_History_Treatment + Family1_vs_NoFamily0_auto + Family_History_Treatment*Family1_vs_NoFamily0_auto,data=open.ended) #using auto version
+#m3<-lm(`Immigration-Therm_1`~ Family_History_Treatment + Family1_vs_NoFamily0 + Family_History_Treatment*Family1_vs_NoFamily0,data=open.ended) #using hand version
+m4<-lm(`Immigration-Therm_1`~ Family_History_Treatment + sentiment + Family1_vs_NoFamily0_auto + Family1_vs_NoFamily0_auto*sentiment + Family1_vs_NoFamily0_auto*Family_History_Treatment + sentiment*Family_History_Treatment +Family_History_Treatment*Family1_vs_NoFamily0_auto*sentiment,data=open.ended)
+#m4<-lm(`Immigration-Therm_1`~ Family_History_Treatment + sentiment + Family1_vs_NoFamily0 + Family1_vs_NoFamily0*sentiment + Family1_vs_NoFamily0*Family_History_Treatment + sentiment*Family_History_Treatment +Family_History_Treatment*Family1_vs_NoFamily0*sentiment,data=open.ended)#hand ver
+tab_model(m1,m2,m3,m4,dv.labels = c("Model 1","Model 2", "Model 3","Model 4"))
+```
+
+  - Model 1: [No evidence of an interaction effect with baseline empathy.]{color="red"}
+  - Model 2: [No evidence of an interaction effect with emotion regulation.]{color="red"}
+  - Model 3: [No evidence of an interaction effect with family text.]{color="red"}
+  - Model 4: [Some evidence of positive interaction effect of treatment, with positive sentiment, and family text, on thermometer outcome.]{color="red"}
+
+### Mechanism: Reactive Empathy
+
+* **Description**: Taking perspective leads to concern for groups experiencing difficulties, causing attitude change
+* **Relation to Prime**: Reflecting on family leads to concern for others in difficult situations, causing attitude change
+* **Outcome**: Thermometer
+* Possible tests
+  - This is cold empathy, which means cognitively you imagine/think about the other’s experience. Since it is the opposite of hot empathy, it could be tested with the above suggestion. (???)
+
+[Could use some help here formulating tests!]{color="red"}
+
+
+### Mechanism: Attributions
+
+* **Description**: Taking perspective leads to emphasis on non-dispositional explanations of behavior, causing attitude change
+* **Relation to Prime**: Reflecting on family leads to emphasis on social factors like poverty or war as motives for migration rather than belief that migrants are personally greedy, causing attitude change
+* **Outcome**: Thermometer
+* Possible tests
+  - Model 1: Test if treatment* text talking about poverty/war/ correlated positively with outcome. `uncontrolled_circumstances`
+  - Model 2: Test if text discussing slavery*treatment correl positively with outcome `Slavery1_vs_NoSlavery0`
+  - Does treatment reduce tendency for people to specify that their ancestors came "legally" 
+
+```{r,echo=FALSE,eval=TRUE,warning=FALSE}
+m1<-lm(`Immigration-Therm_1`~ Family_History_Treatment + uncontrolled_circumstances + Family_History_Treatment*uncontrolled_circumstances,data=open.ended)
+m2<-lm(`Immigration-Therm_1`~ Family_History_Treatment + Slavery1_vs_NoSlavery0 + Family_History_Treatment*Slavery1_vs_NoSlavery0,data=open.ended)
+tab_model(m1,m2,dv.labels = c("Model 1","Model 2"))
+```
+
+```{r,echo=FALSE,eval=FALSE,warning=FALSE}
+m1<-lm(`Immigration-Therm_1`~ Family_History_Treatment + isimmigrant + Family_History_Treatment*isimmigrant,data=d)
+m2<-lm(`Immigration-Therm_1`~ Family_History_Treatment + isimmigrant1 + Family_History_Treatment*isimmigrant1,data=d)
+m3<-lm(`Immigration-Therm_1`~ Family_History_Treatment + isimmigrant2 + Family_History_Treatment*isimmigrant2,data=d)
+tab_model(m1,m2,m3,dv.labels = c("Model 1","Model 2", "Model 3"))
+```
+
+```{r,echo=FALSE,eval=FALSE,warning=FALSE}
+t<-t.test(d$`Immigration-Open-Int`~ d$Imm_reason_text_family,alternative=("two.sided"),conf.level=0.95)
+t
+t<-t.test(d$`Immigration-Open-Int`~ d$Imm_reason_text_blacknative,alternative=("two.sided"),conf.level=0.95)
+t
+
+t<-t.test(d$`Immigration-Open-Int`~ d$Imm_know_reason,alternative=("two.sided"),conf.level=0.95)
+t
+m<-lm(`Immigration-Open-Int`~ Imm_know_reason + Family_History_Treatment + Family_History_Treatment*Imm_know_reason,data=d)
+summary(m)
+
+m<-lm(`Immigration-Therm_1`~ Imm_know_reason + Family_History_Treatment + Family_History_Treatment*Imm_know_reason,data=d)
+summary(m)
+
+m<-lm(`Immigration-Therm_1`~ Imm_reason_text_family,data=d)
+summary(m)
+```
+
+
+
+
+
+# Weighted results
+
+```{r,echo=FALSE,eval=TRUE,message=FALSE,warning=FALSE}
+#keep d for which na removed for two variables we're weighting on, Age/Hispanic
+sub.d<-d[which(!is.na(d$age_categ)&!is.na(d$latino)),]
+d.unweighted<-svydesign(ids=~1, data=sub.d)
+#let's rake the data
+#first calculate marginal distr of variables that are off in survey: Age, Hispanic
+prop.age1=741/5695
+prop.age2=2335/5695
+prop.age3=1709/5695
+prop.age4=911/5695
+age.dist<-data.frame(age_categ=c("18 to 24 years old","25 to 44 years old","45 to 64 years old","Over 65"),
+                     Freq=nrow(d)*c(prop.age1,prop.age2,prop.age3,prop.age4))
+prop.hispanic<-627/5695
+prop.nothispanic<-5068/5695
+hispanic.dist<-data.frame(latino=c("Yes","No"),Freq=nrow(d)*c(prop.hispanic,prop.nothispanic))
+
+d.rake <- rake(design = d.unweighted,
+                   sample.margins = list(~age_categ, ~latino),
+                   population.margins = list(age.dist, hispanic.dist),)
+```
+
+**Immigration Open**
+
+* Model 1: Immigration Open ~ Treatment (unweighted data)
+* Model 2: Immigration Open ~ Treatment (weighted data)
+
+```{r,echo=FALSE,eval=TRUE,message=FALSE,warning=FALSE}
+m1 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment`,data=d)
+m1b <- svyglm(`Immigration-Open-Int`~`Family_History_Treatment`,design=d.rake)
+tab_model(m1,m1b,dv.labels = c("Immigration Open","Immigration Open (weighted)"))
+```
+
+**Thermometer**
+
+* Model 1: Thermometer ~ Treatment (unweighted data)
+* Model 2: Thermometer ~ Treatment (weighted data)
+
+```{r,echo=FALSE,eval=TRUE,message=FALSE,warning=FALSE}
+m2 <- lm(`Immigration-Therm_1` ~ `Family_History_Treatment`, data = d)
+m2b <- svyglm(as.numeric(`Immigration-Therm_1`)~`Family_History_Treatment`,design=d.rake)
+tab_model(m2,m2b,dv.labels = c("Thermometer","Thermometer (weighted)"))
+
+#stargazer(m1b,m2b,title="Weighted Main Results: Study 3",align=TRUE,dep.var.labels=c("Open Immigration", "Immigration Thermometer"),
+#covariate.labels=c("(Family History) Treatment"),
+#omit.stat=c("LL","ser","f"), ci=TRUE, ci.level=0.95, single.row=FALSE)
+```
+
+# Survey timing
+
+**Experiment 3 survey times**
+
+```{r,echo=FALSE,eval=TRUE,warnings=FALSE}
+time<-data.frame(Full_Sample=as.vector(summary(d$Durationinmin)),Treatment=as.vector(summary(d$Durationinmin[d$Family_History_Treatment==1])),Control=as.vector(summary(d$Durationinmin[d$Family_History_Treatment==0])),
+                 row.names=c("Min","1st Q", "Median","Mean","3rd Q","Max"))
+kable(round(time,3), caption = "Experiment 3 Times") %>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F) %>%
+  footnote(general = "")
+```
+
+**Experiment 2 survey times**
+
+```{r,echo=FALSE,eval=TRUE,warnings=FALSE}
+study2<-read.dta13("/Users/adelinelo/Adeline Research Dropbox/Adeline Lo/Survey Experiment/Initial Family History Results/family_history_wave2_data.dta")
+#set time variables, then create Duration variable in minutes
+study2$StartDate<-strptime(study2$StartDate,format='%m/%d/%Y %H:%M')
+study2$enddate<-strptime(study2$enddate,format='%m/%d/%Y %H:%M')
+#remove if the start/end date exactly the same
+study2.na.rm<-study2[which(study2$StartDate!=study2$enddate),]
+study2.na.rm$Durationinmin<-as.numeric(study2.na.rm$enddate-study2.na.rm$StartDate)
+time<-data.frame(Full_Sample=as.vector(summary(study2.na.rm$Durationinmin)),Treatment=as.vector(summary(study2.na.rm$Durationinmin[study2.na.rm$immigration_treatment==1]))[-7],Control=as.vector(summary(study2.na.rm$Durationinmin[study2.na.rm$immigration_treatment==0]))[-7],
+                 row.names=c("Min","1st Q", "Median","Mean","3rd Q","Max"))
+kable(round(time,3), caption = "Experiment 2 Times") %>%
+  kable_styling(bootstrap_options=c("striped","hover","condensed"),full_width=F) %>%
+  footnote(general = "")
+```
+
+**Could length of survey relate to smaller treatment effect in Experiment 3?**
+
+Pool Experiment 2/Experiment 3 data for family history treatment and thermometer outcomes; control for survey time explicitly. Scaled duration in minutes is time variable.
+
+```{r,echo=FALSE,eval=TRUE,warnings=FALSE}
+#Experiment 2: (study2.na.rm) T="immigration_treatment", Y="immigrant_therm_1", Time="Durationinmin"
+  #Party="
+#Experiment 3: (d) T="Family_History_Treatment",Y="Immigration-Therm_1",Time="Durationinmin"
+tmp<-data.frame(Experiment=as.factor(rep(c("Exp2","Exp3"),times=c(nrow(study2.na.rm),nrow(d))))
+           ,Treatment=c(study2.na.rm$immigration_treatment,d$`Family_History_Treatment`)
+           ,Y=c(study2.na.rm$immigrant_therm_1,d$`Immigration-Therm_1`)
+           ,Time=c(standardize(study2.na.rm$Durationinmin),standardize(d$Durationinmin)))
+m1<-lm(Y~Treatment + Time,data=tmp)
+m2<-lm(Y~Treatment + Experiment,data=tmp)
+m3<-lm(Y~Treatment + Experiment + Time + Treatment*Time + Treatment*Experiment,data=tmp)
+tab_model(m1,m2,m3,dv.labels = rep("Thermometer",3))
+```
+
+# Small treatment effects
+
+## Small value treatment effect on Thermometer in Exp 3
+* Experiment 1: (Restrict Outcome: Difference = 0.391, Standard Error = 0.121) N=1,000
+* Experiment 2: 
+  - (Restrict Outcome: Difference = 0.281, Standard Error = 0.106) 
+  - (Thermometer: Difference = 3.8, Standard Error = 1.67; 95% CI = [0.5268601,7.07314]) N = 1274
+* Experiment 3: 
+  - (Restrict Outcome: Difference = -0.033, Standard Error = 0.054)
+  - (Thermometer: Difference = (58.63785-56.69243) = 1.94542, Standard Error = 0.917; 95% CI = [-3.7435818, -0.1472601])
+N=3831
+Conduct experiment: let largest Thermometer estimate be the true parameter mu value, 3.818, and the associated standard error 1.67 to be the true parameter sigma value. What is the likelihood of drawing an estimated/mu-hat of 1.95 from this distribution with N size equal to Experiment 3 (N=3831)? 
+
+
+```{r,echo=TRUE,eval=FALSE}
+#calc confidence intervals for Exp 2
+(3.8+qnorm(0.975,0,1)*1.67)
+(3.8+qnorm(0.025,0,1)*1.67)
+#CLT leaning here
+sims=1000000 #1 of simulated experiments
+mymu<-3.8
+mysd<-1.67*sqrt(1274) #get sd from se*sqrt(samplesize) (var is mysd^2)
+set.seed(12345)
+myexperiment<-replicate(n=sims,mean(rnorm(3831,mean=mymu,sd=mysd)))
+saveRDS(myexperiment,file="family_sim_small_treatment_likelihood.rds")
+```
+
+We conduct a simulated experiment whereby we simulate 1,000,000 draws of N=3831 (the n size of Experiment 3) from a true dgp of a normal distribution, centered at our Experiment 2 mean (mu=3.8) with standard deviation from Experiment 2 sd (sd=60.19). See below for a plot of the empirical distribution of the drawn "experiment mu_hats". Black dashed lines at either end of the distribution indicate the 95% coverage interval. This coverage interval includes the treatment effect found in Experiment 3 (1.95). 
+
+```{r, echo=FALSE,eval=TRUE}
+mymu<-3.8
+myexperiment<-readRDS(file="family_sim_small_treatment_likelihood.rds")
+myexperiment<-sort(myexperiment,decreasing=FALSE)
+#95 CI
+val_low<-myexperiment[round(length(myexperiment)*0.025)]
+val_high<-myexperiment[round(length(myexperiment)*0.975)]
+#99 CI
+val_low99<-myexperiment[round(length(myexperiment)*0.005)]
+val_high99<-myexperiment[round(length(myexperiment)*0.995)]
+sub_myexperiment<-subset(myexperiment,myexperiment<=val_low | myexperiment>=val_high)
+sub_myexperiment99<-subset(myexperiment,myexperiment<=val_low99 | myexperiment>=val_high99)
+plotdata<-data.frame(mu_hat=myexperiment)
+plotdata_CI<-data.frame(mu_hat=sub_myexperiment)
+plotdata_CI99<-data.frame(mu_hat=sub_myexperiment99)
+#what density lies below 1.945? length(myexperiment[myexperiment<=1.95])/sims
+p<-ggplot(plotdata,aes(x=mu_hat)) + geom_histogram(aes(y=..density..),binwidth=0.2,fill="gray80",color="gray20") + 
+    geom_vline(xintercept=mymu,col="gray20",linetype="solid",size=1) + #true line
+  ##95 CI
+    geom_vline(xintercept=val_low,col="gray20",linetype="dotted") +
+    geom_vline(xintercept=val_high,col="gray20",linetype="dotted") +
+  ##99 CI
+    geom_vline(xintercept=val_low99,col="gray10",linetype="longdash") +
+    geom_vline(xintercept=val_high99,col="gray10",linetype="longdash") +
+    geom_vline(xintercept=1.95,col="red") + #estimated in Experiment 3
+    annotate("text",x=2.5,y=0.43,label=" Study 3 mu hat\n= 1.95",col="red") +
+    theme_bw() + xlab("Empirical Distribution around mu hat = 3.8")
+p
+#smalltreatmenteffect_simulations.pdf
+```
+
+## Null value treatment effect on Immig Open in Exp 3
+
+* Experiment 1: (Restrict Outcome: Difference = 0.391, Standard Error = 0.121; 95% CI = [0.1538444,0.6281556]) N=1,000
+* Experiment 2: (Restrict Outcome: Difference = 0.281, Standard Error = 0.106) N=1274
+* Experiment 3: (Restrict Outcome: Difference = -0.033, Standard Error = 0.054; 95% CI = [-0.1388381,0.07283806]) N=3818
+Conduct experiment: let largestreatment estimate on restrict be the true parameter mu value, 0.391, and the associated standard error 0.121 to be the true parameter sigma value. What is the likelihood of drawing an estimated/mu-hat of -0.033 from this distribution with N size equal to Experiment 3 (N=3818)? 
+
+```{r, echo=FALSE,eval=FALSE}
+#calc confidence intervals for Exp 1
+(0.391+qnorm(0.975,0,1)*0.121)
+(0.391+qnorm(0.025,0,1)*0.121)
+#calc confidence intervals for Exp 3
+(-0.033+qnorm(0.975,0,1)*0.054)
+(-0.033+qnorm(0.025,0,1)*0.054)
+sims=10000 #1 of simulated experiments
+mymu<-0.391
+mysd<-0.121*sqrt(1274) #get sd from se*sqrt(samplesize) (var is mysd^2)
+set.seed(12345)
+myexperiment2<-replicate(n=sims,mean(rnorm(3818,mean=mymu,sd=mysd)))
+saveRDS(myexperiment2,file="family_sim_small_treatment_likelihood2.rds")
+```
+
+In this simulated experiment we can see that the likelihood of the estimated effect in Experiment 3 coming from the same distribution as that of Experiment 2 is unlikely.
+
+```{r, echo=FALSE,eval=TRUE}
+mymu<-0.391
+myexperiment2<-readRDS(file="family_sim_small_treatment_likelihood2.rds")
+myexperiment2<-sort(myexperiment2,decreasing=FALSE)
+val_low<-myexperiment2[round(length(myexperiment2)*0.025)]
+val_high<-myexperiment2[round(length(myexperiment2)*0.975)]
+sub_myexperiment2<-subset(myexperiment2,myexperiment2<=val_low | myexperiment2>=val_high)
+plotdata<-data.frame(mu_hat=myexperiment2)
+plotdata_CI<-data.frame(mu_hat=sub_myexperiment2)
+#what density lies below 1.945? length(myexperiment2[myexperiment2<=-0.033])/sims
+p<-ggplot(plotdata,aes(x=mu_hat)) + geom_histogram(aes(y=..density..),binwidth=0.01,fill="gray80",color="gray20") + 
+    geom_vline(xintercept=mymu,col="gray20",linetype="solid",size=1) + #true line
+    geom_vline(xintercept=val_low,col="gray20",linetype="dashed") + #low 95%
+    geom_vline(xintercept=val_high,col="gray20",linetype="dashed") +
+    geom_vline(xintercept=-0.033,col="red") + #estimated in Experiment 3
+    #annotate("text",x=-0.033,y=0.38,label="-0.033") +
+    theme_bw() + xlab("Empirical Distribution around mu hat = 0.391")
+p
+```
+
+
+# Empathy battery variable robustness
+
+Removing the fantasy variable in the empathy battery (as preregistered in PAP), so that 21 total questions compose the index. Here we rerun the main treatment effect tests with the preregistered 21 question index: `empathybattery_21_s` (scaled, 21 question empathy battery). We're refer to this as EmpathyBattery21.
+
+## Robustness empathy battery: Main treatment effect
+**OLS family history treatment effect on (policy) open immigration**
+
+* Model 1: Open Immigration ~ Treatment -- basic OLS
+* Model 2: Open Immigration ~ Treatment + EmpathyBattery + Treatment*EmpathyBattery (22 q empathy battery)
+* Model 3: Open Immigration ~ Treatment + EmpathyBattery21 + Treatment*EmpathyBattery21
+
+```{r,echo=FALSE,eval=TRUE,warning=FALSE,message=FALSE}
+m1 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment`, data = d)
+m2 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s, data = d)
+#we'll control for empathy baseline in m3
+m3 <- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + empathybattery_21_s + `Family_History_Treatment`*empathybattery_21_s, data = d)
+tab_model(m1, m2, m3, auto.label=TRUE)
+```
+
+[Same results.]{color="orange"}
+
+**OLS family history treatment effect on thermometer**
+
+* Model 1: Thermometer ~ Treatment -- basic OLS (should look like t-test results)
+* Model 2: Thermometer ~ Treatment + EmpathyBattery + Treatment*EmpathyBattery (22 q empathy battery)
+* Model 3: Thermometer ~ Treatment + EmpathyBattery21 + Treatment*EmpathyBattery21
+
+```{r,echo=FALSE,warning=FALSE,eval=TRUE}
+m1 <- lm(`Immigration-Therm_1` ~ `Family_History_Treatment`, data = d)
+#we'll control for party id in m2 (only covariate slightly imbalanced)
+m2 <- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + empathybattery_s + `Family_History_Treatment`*empathybattery_s, data = d)
+#we'll control for empathy baseline in m3
+m3 <- lm(`Immigration-Therm_1`~ `Family_History_Treatment` + empathybattery_21_s + `Family_History_Treatment`*empathybattery_21_s, data = d)
+tab_model(m1, m2, m3, auto.label=TRUE)
+```
+
+[Same results.]{color="orange"}
+
+## Robustness empathy battery: Mechanism tests
+
+### Baron and Kenny
+**Replicate Table 1 in paper: with 21 question empathy battery**
+
+```{r,echo=FALSE,warning=FALSE,eval=TRUE}
+#Stage 1: Treatment effect on Thermometer
+med2a <- lm(`Immigration-Therm_1`~ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery_21_2, data = d)
+#Stage 2: Treatment effect on Mediator
+med1 <- lm(`Immigration-Empathy-Int` ~ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery_21_2, data = d)
+#Stage 3: Treatment effect on Thermometer, Controlling for Mediator
+med2b <- lm(`Immigration-Therm_1`~ `Immigration-Empathy-Int`+ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery_21_2, data = d)
+tab_model(med2a,med1,med2b, dv.labels=c("Stage 1: Y~T","Stage 2: M~T", "Stage 3: Y~M+T"),terms = c("(Intercept)","Family_History_Treatment [1]", "Immigration-Empathy-Int"), robust=TRUE, show.se=TRUE)
+```
+
+compare against:
+
+**Replicate Table 1 in paper: with 22 question empathy battery**
+
+```{r,echo=FALSE,warning=FALSE,eval=TRUE}
+#Stage 1: Treatment effect on Thermometer
+med2a <- lm(`Immigration-Therm_1`~ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+#Stage 2: Treatment effect on Mediator
+med1 <- lm(`Immigration-Empathy-Int` ~ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+#Stage 3: Treatment effect on Thermometer, Controlling for Mediator
+med2b <- lm(`Immigration-Therm_1`~ `Immigration-Empathy-Int`+ `Family_History_Treatment`+ gender + Age + partyid2 + educ + empathybattery2, data = d)
+tab_model(med2a,med1,med2b, dv.labels=c("Stage 1: Y~T","Stage 2: M~T", "Stage 3: Y~M+T"),terms = c("(Intercept)","Family_History_Treatment [1]", "Immigration-Empathy-Int"), robust=TRUE, show.se=TRUE)
+```
+
+[Same results.]{color="orange"}
+
+### Imai et al. 2013: Emotion regulation
+
+Data clean for mediator variable: emotion regulation
+
+**Immigration Open**
+
+* Model 1: Immigration Open ~ Treatment + Emotion Reg + controls/interactions for empathy score (22 q ver)
+* Model 2: Immigration Open ~ Treatment + Emotion Reg + controls/interactions for empathy score (21 q ver)
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+med1<- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + `Emotion_Reg_Treatment` + `Family_History_Treatment`*`Emotion_Reg_Treatment` + empathybattery_s + empathybattery_s*`Family_History_Treatment` + empathybattery_s*`Emotion_Reg_Treatment` + empathybattery_s*`Family_History_Treatment`*`Emotion_Reg_Treatment`, data = d)
+med2<- lm(`Immigration-Open-Int` ~ `Family_History_Treatment` + `Emotion_Reg_Treatment` + `Family_History_Treatment`*`Emotion_Reg_Treatment` + empathybattery_21_s + empathybattery_21_s*`Family_History_Treatment` + empathybattery_21_s*`Emotion_Reg_Treatment` + empathybattery_21_s*`Family_History_Treatment`*`Emotion_Reg_Treatment`, data = d)
+tab_model(med1,med2,dv.labels = c("Model 1", "Model 2"))
+```
+
+[Same results.]{color="orange"}
+
+**Thermometer**
+
+* Model 1: Thermometer ~ Treatment + Emotion Reg + controls/interactions for empathy score (22 q ver)
+* Model 2:  Thermometer ~ Treatment + Emotion Reg + controls/interactions for empathy score (21 q ver)
+
+```{r,echo=FALSE,warning=FALSE, eval=TRUE}
+med1<- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + `Emotion_Reg_Treatment` + `Family_History_Treatment`*`Emotion_Reg_Treatment` + empathybattery_s + empathybattery_s*`Family_History_Treatment` + empathybattery_s*`Emotion_Reg_Treatment` + empathybattery_s*`Family_History_Treatment`*`Emotion_Reg_Treatment`, data = d)
+
+med2<- lm(`Immigration-Therm_1` ~ `Family_History_Treatment` + `Emotion_Reg_Treatment` + `Family_History_Treatment`*`Emotion_Reg_Treatment` + empathybattery_21_s + empathybattery_21_s*`Family_History_Treatment` + empathybattery_21_s*`Emotion_Reg_Treatment` + empathybattery_21_s*`Family_History_Treatment`*`Emotion_Reg_Treatment`, data = d)
+tab_model(med1,med2,dv.labels = c("Model 1", "Model 2"))
+```
+
+[Same results.]{color="orange"}
+
+
+# Notes in letter to editor
+
+In this revision, we address the possibility that respondents' perception of source credibility matters by coding all our open-ended responses to our treatment question: "In one or two sentences, please tell us why your family came to the United States." By coding the responses to this question, we are able to gauge whether our treatment was interpreted in any way by our respondents as an attempt on our part to influence them in a partisan manner, as R3 conjectures. We find that of the 1,723 open-ended answers to this question, only `r (round(prop.table(table(open.ended$Partisan.priming))[2],3)*100)` percentmade any mention of a partisan narrative: if the assumed partisan nature of the prime played a role, it was too small a role to influence our results. 
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+round(prop.table(table(open.ended$Partisan.priming)),3)
+```
+
+Split by treatment
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+prop.table(table(open.ended$Partisan.priming,open.ended$Family_History_Treatment))
+```
+
