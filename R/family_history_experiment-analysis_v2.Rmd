@@ -1024,7 +1024,7 @@ tab_model(het1,het2,dv.labels = c("Model 1","Model 2"))
 
 ```{r,echo=FALSE, eval=FALSE, warning=FALSE}
 #openendedbytreatment_CLA-AL-coding_HPiA.csv --handcoded variables
-open.ended<-read.csv("openendedbytreatment_CLA-AL-coding_HPiA.csv") #match back on rownames with d
+open.ended<-read.csv("openendedbytreatment.csv") #match back on rownames with d
 row_order<-match(rownames(d),open.ended$X)
 open.ended<-open.ended[row_order,]
 open.ended$Partisan.priming[which(open.ended$Partisan.priming=="na")]<-NA
