@@ -430,7 +430,7 @@ Specify 2 statistical models:
 Fit 1) and 2) separately. The fitted objects are main inputs to the `mediate` fn, which computes the estimated ACME and other quantities of interest under these models and the sequential ignorability assumption.
 
 **Immigration Open**
-We're going to control for gender, age, party and education. All confidence interval estimators are estimated with a nonparametric bootstrap.
+We're going to control for gender, age, party, education and baseline empathy. All confidence interval estimators are estimated with a nonparametric bootstrap.
 
 ```{r,echo=FALSE,warning=FALSE,message=FALSE,eval=FALSE}
 set.seed(12020)
@@ -472,7 +472,7 @@ text(x=(-0.0086-0.03),y=1.1,label="-0.0086",col="gray30")
 ```{r,echo=FALSE,warning=FALSE,message=FALSE,eval=TRUE}
 med1w.out<-readRDS(file="med1_wEmpathy_out.rds")
 #summary(med1.out)
-#pdf("Figures/imai-mediate-wempathy-y1.pdf") 
+#pdf("Figures/imai-mediate-wempathy-y1.pdf")  #portrait 6 x 8
 plot(med1w.out,col="gray30", main="Open Immigration")
 text(x=0.025,y=3.1,label="0.0233",col="gray30")
 text(x=-0.0313,y=2.1,label="-0.0302",col="gray30")
@@ -1024,7 +1024,7 @@ tab_model(het1,het2,dv.labels = c("Model 1","Model 2"))
 
 ```{r,echo=FALSE, eval=FALSE, warning=FALSE}
 #openendedbytreatment_CLA-AL-coding_HPiA.csv --handcoded variables
-open.ended<-read.csv("openendedbytreatment.csv") #match back on rownames with d
+open.ended<-read.csv("openendedbytreatment_CLA-AL-coding_HPiA.csv") #match back on rownames with d
 row_order<-match(rownames(d),open.ended$X)
 open.ended<-open.ended[row_order,]
 open.ended$Partisan.priming[which(open.ended$Partisan.priming=="na")]<-NA
@@ -1334,8 +1334,22 @@ plotdata<-na.omit(data.frame(Treatment=ifelse(open.ended$Family_History_Treatmen
                                       ifelse(open.ended$Family_History_Treatment==0,"Control",NA))
                                       ,Thermometer=open.ended$`Immigration-Therm_1`
            ,Text=open.ended$Imm_reason_text,Sentiment=open.ended$sentiment))
-# Grouped
+#sentiment v therm
 p<-plotdata %>%
+  mutate(Sentiment = fct_reorder(Sentiment, Thermometer)) %>%
+  mutate(Sentiment = factor(Sentiment, levels=c("negative","neutral","positive"))) %>%
+  ggplot(aes(y=Thermometer, x=Sentiment)) + 
+    #geom_violin(alpha=0.5, outlier.colour="transparent") +
+    geom_boxplot(color="gray20", fill=viridis(3), alpha=0.50) +
+    geom_jitter(width = 0.08, height = 0.05, alpha=0.25, color="gray20") +
+    theme_bw()  +
+    xlab("Sentiment") +
+    ylab("Thermometer") +
+    ylim(0,100)
+p
+
+# Grouped
+p2<-plotdata %>%
   mutate(Sentiment = fct_reorder(Sentiment, Thermometer)) %>%
   mutate(Sentiment = factor(Sentiment, levels=c("negative","neutral","positive"))) %>%
   ggplot(aes(fill=Treatment, y=Thermometer, x=Sentiment)) + 
@@ -1347,7 +1361,6 @@ p<-plotdata %>%
     xlab("Sentiment") +
     ylab("Thermometer") +
     ylim(0,100)
-p
 #text_sentiment_therm_bar.pdf
 #ggsave(file="Figures/text_sentiment_therm_bar.pdf",p,width=5, height=6)
 ```
@@ -1358,6 +1371,21 @@ plotdata<-na.omit(data.frame(Treatment=ifelse(open.ended$Family_History_Treatmen
                                       ifelse(open.ended$Family_History_Treatment==0,"Control",NA))
                                       ,Thermometer=open.ended$`Immigration-Therm_1`
            ,Text=open.ended$Imm_reason_text,Sentiment=open.ended$sentiment_n))
+plotdata %>%
+  #mutate(Treatment = fct_reorder(Treatment, Thermometer)) %>%
+  #mutate(Sentiment = factor(Sentiment, levels=c("negative","neutral","positive"))) %>%
+ggplot(aes(y=Thermometer, x=Sentiment)) +
+  #geom_point(pch = 21, size=0.5, alpha=0.5) +
+  geom_jitter(pch=21, size=0.5, alpha=0.5, position="jitter") + #, width=0.05) + #
+  geom_smooth(method="lm",se=TRUE, color="gray50") +
+  scale_fill_viridis(discrete=T, name="",alpha=0.8, begin=0.5, end=1,option="E") +
+  theme_bw() +
+  xlab("Sentiment") +
+  xlim(-1,1 )+
+  ylab("Thermometer") +
+  ylim(0,100)
+summary(lm(Thermometer~Sentiment,data=plotdata))
+
 plotdata %>%
   mutate(Treatment = fct_reorder(Treatment, Thermometer)) %>%
   #mutate(Sentiment = factor(Sentiment, levels=c("negative","neutral","positive"))) %>%
