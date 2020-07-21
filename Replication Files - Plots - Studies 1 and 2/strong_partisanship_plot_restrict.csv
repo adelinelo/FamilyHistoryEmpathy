@@ -1,0 +1,22 @@
+term,estimate,std.error,statistic,p.value,model
+Survey 1,0.744,0.244,3.05,0.003,Strong Republican
+Survey 1,0.46,0.352,1.3,0.196,Republican
+Survey 1,-0.466,0.453,1.03,0.309,Lean Republican
+Survey 1,0.325,0.185,1.75,0.081,Independent
+Survey 1,0.333,0.458,0.73,0.469,Lean Democrat
+Survey 1,0.769,0.453,1.7,0.094,Democrat
+Survey 1,0.913,0.295,3.1,0.002,Strong Democrat
+Survey 2,0.585,0.174,3.35,0.001,Strong Republican
+Survey 2,0.639,0.234,2.73,0.007,Republican
+Survey 2,-0.34,0.314,1.08,0.282,Lean Republican
+Survey 2,0.026,0.169,0.16,0.877,Independent
+Survey 2,0.804,0.374,2.15,0.034,Lean Democrat
+Survey 2,0.591,0.262,2.26,0.025,Democrat
+Survey 2,0.197,0.249,0.79,0.43,Strong Democrat
+Survey 3,0.273,0.112,2.43,0.016,Strong Republican
+Survey 3,0.071,0.127,0.56,0.576,Republican
+Survey 3,0.059,0.138,0.42,0.673,Lean Republican
+Survey 3,0.09,0.102,0.88,0.376,Independent
+Survey 3,-0.052,0.152,0.34,0.734,Lean Democrat
+Survey 3,-0.144,0.16,0.9,0.369,Democrat
+Survey 3,-0.153,0.185,0.83,0.409,Strong Democrat

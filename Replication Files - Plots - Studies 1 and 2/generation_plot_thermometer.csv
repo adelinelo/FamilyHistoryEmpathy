@@ -1,0 +1,5 @@
+term,estimate,std.error,statistic,p.value,model
+Survey 2,2.931,2.601,1.13,0.26,Grandparents or later
+Survey 2,4.8,2.089,2.3,0.022,Great-Grandparents or earlier
+Survey 3,3.488,1.405,2.48,0.013,Grandparents or later
+Survey 3,0.169,1.185,0.14,0.887,Great-Grandparents or earlier

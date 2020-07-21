@@ -1,0 +1,7 @@
+term,estimate,std.error,statistic,p.value,model
+Survey 2,9.017,3.058,2.95,0.003,Republican
+Survey 2,-0.472,2.651,0.18,0.859,Independent
+Survey 2,5.416,2.416,2.24,0.025,Democrat
+Survey 3,2.582,1.46,1.77,0.078,Republican
+Survey 3,1.962,1.742,1.13,0.26,Independent
+Survey 3,0.324,1.42,0.23,0.82,Democrat
