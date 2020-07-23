@@ -1,5 +1,5 @@
 # Family History Empathy
-Replication files for "Increasing Immigrant Inclusion: Family History, Empathy, and Immigration in the United States", by Scott Williamson, Claire Adida, Adeline Lo, Melina Platas, Lauren Prather and Seth Werfel.
+Replication files for "Family Matters: How Immigrant Histories Can Promote Inclusion", by Scott Williamson, Claire Adida, Adeline Lo, Melina Platas, Lauren Prather and Seth Werfel.
 
 ## Papers
 - Manuscript: `main.pdf`
