@@ -498,28 +498,6 @@ reg immigrant_therm treatment male white college age i.state_id if trump_ap==0, 
 reg immigrant_therm treatment male white college age i.state_id if my_grandparent_gen==1, vce(robust)
 reg immigrant_therm treatment male white college age i.state_id if my_grandparent_gen==0, vce(robust)
 
-***Empathy Analysis*********************************************************
-
-*** Mediation
-
-generate immigrant_emp = 7 if immigrationempathy=="Strongly agree"
-replace immigrant_emp = 6 if immigrationempathy=="Agree"
-replace immigrant_emp = 5 if immigrationempathy=="Somewhat agree"
-replace immigrant_emp = 4 if immigrationempathy=="Neither agree nor disagree"
-replace immigrant_emp = 3 if immigrationempathy=="Somewhat disagree"
-replace immigrant_emp = 2 if immigrationempathy=="Disagree"
-replace immigrant_emp = 1 if immigrationempathy=="Strongly disagree"
-
-summarize immigrant_emp
-
-reg immigrant_emp treatment,vce(robust)
-reg immigrant_therm treatment,vce(robust)
-reg immigrant_therm immigrant_emp treatment,vce(robust)
-
-reg immigrant_emp treatment republican democrat male white college age i.state_id,vce(robust)
-reg immigrant_therm treatment republican democrat male white college age i.state_id,vce(robust)
-reg immigrant_therm immigrant_emp treatment republican democrat male white college age i.state_id,vce(robust)
-
 * Saving dataset for plotting and pooled analysis
 *generate wave = 3
 *keep not_restrict_immigrant immigrant_therm treatment republican strong_republican medium_republican lean_republican independent lean_democrat medium_democrat strong_democrat democrat male white college age state_id wave
