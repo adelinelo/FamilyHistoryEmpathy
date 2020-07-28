@@ -252,7 +252,7 @@ summarize not_restrict_immigrant
 ttest not_restrict_immigrant, by(treatment)
 reg not_restrict_immigrant treatment, vce(robust)
 
-reg immigrant_restrict treatment republican democrat male white college age employed i.region, vce(robust)
+reg not_restrict_immigrant treatment republican democrat male white college age employed i.region, vce(robust)
 
 * Magnitude is one-fourth of difference between reps and indeps, and one-sixth
 * of difference between reps and dems.
@@ -528,22 +528,6 @@ reg immigrant_therm immigrant_emp treatment republican democrat male white colle
 ********************************************************************
 *********************** Combined ***********************************
 ********************************************************************
-
-***CLEANING*********************************************************
-
-*** Making pooled dataset for plotting
-
-use "outcome_treatment_wave3", clear
-
-append using "outcome_treatment_wave2"
-
-append using "outcome_treatment_wave1"
-
-ttest restrict, by(treatment)
-summarize restrict
-
-ttest therm, by(treatment)
-summarize therm
 
 *** Making pooled dataset for analysis
 
