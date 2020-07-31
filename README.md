@@ -1,6 +1,8 @@
 # Family History Empathy
 Replication files for **"Family Matters: How Immigrant Histories Can Promote Inclusion"**, by Scott Williamson, Claire Adida, Adeline Lo, Melina Platas, Lauren Prather and Seth Werfel.
 
+Public registration details for Study 3 can be found at: https://osf.io/cx2zp.
+
 ## Papers
 - Manuscript: `main.pdf`
 - Appendices: `appendix.pdf`
