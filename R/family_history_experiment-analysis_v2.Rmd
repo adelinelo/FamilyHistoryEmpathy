@@ -1,7 +1,7 @@
 ---
 title: "Family History Experiment: analysis"
 author: "Adeline Lo"
-date: "Last Edited: July 2020"
+date: "Last Edited: October 2020"
 output: 
   html_document: 
     pandoc_args: ["--lua-filter=color-text.lua"]
@@ -1022,9 +1022,9 @@ tab_model(het1,het2,dv.labels = c("Model 1","Model 2"))
 
 # Text descriptions of family history
 
-```{r,echo=FALSE, eval=FALSE, warning=FALSE}
-#openendedbytreatment_CLA-AL-coding_HPiA.csv --handcoded variables
-open.ended<-read.csv("openendedbytreatment_CLA-AL-coding_HPiA.csv") #match back on rownames with d
+```{r,echo=FALSE, eval=TRUE, warning=FALSE}
+#openendedbytreatment.csv --handcoded variables
+open.ended<-read.csv("openendedbytreatment.csv") #match back on rownames with d
 row_order<-match(rownames(d),open.ended$X)
 open.ended<-open.ended[row_order,]
 open.ended$Partisan.priming[which(open.ended$Partisan.priming=="na")]<-NA
@@ -1067,8 +1067,27 @@ open.ended$gender<-d$gender
 open.ended$age<-d$Age
 open.ended$educ<-d$educ
 open.ended$`Immigration-Therm_1_n`<-d$`Immigration-Therm_1_n`
+#round(prop.table(table(open.ended$HistoryCount)),3) #proportion of number of histories reported by resp
+open.ended$Imm_reason_text_01<-ifelse(!is.na(open.ended$Imm_reason_text),1,0)#is there text
 saveRDS(open.ended,file="open_ended_cleaned.rds")
 ```
+
+
+## Who is writing texts vs NA?
+
+```{r,echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+table(open.ended$Family_History_Treatment,is.na(open.ended$Imm_reason_text),useNA='always')
+```
+
+[Of respondents who received Control, 55.3% (n=1039) wrote family history descriptions. Of respondents who received Treatment, 54.8% (n=1076) wrote family history descriptions -- essentially the equivalent proportion. ]{color="navy"}
+
+```{r,echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+
+textmod1<-(lm(Imm_reason_text_01~Family_History_Treatment + partyid2 + race + gender + age + educ + Family_History_Treatment*partyid2 + Family_History_Treatment*race + Family_History_Treatment*gender + Family_History_Treatment*age + Family_History_Treatment*educ,data=open.ended))
+tab_model(textmod1, auto.label=TRUE)
+```
+
+Possibly only difference is that gender-other more likely to write text under Treatment compared to under Control arms -- though note this is a total of 10 respondents 4 of whom didn't write and 6 who did.
 
 ## Text descriptions of family history
 
@@ -1904,3 +1923,10 @@ Split by treatment
 prop.table(table(open.ended$Partisan.priming,open.ended$Family_History_Treatment))
 ```
 
+
+
+Covariate balance for study 3
+```{r echo=F, eval=F,warnings=F,message=F}
+m1<-(glm(Family_History_Treatment~Age+gender+educ+race+partyid2+empathybattery_s,data=d,family=binomial(link = "logit")))
+tab_model(m1,auto.label=TRUE)
+```
