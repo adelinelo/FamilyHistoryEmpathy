@@ -4,8 +4,8 @@ Replication files for **"Family Matters: How Immigrant Histories Can Promote Inc
 Public registration details for Study 3 can be found at: https://osf.io/cx2zp.
 
 ## Papers
-- Manuscript: `main.pdf`
-- Appendices: `appendix.pdf`
+- Manuscript: `Family-Matters_WALPPW.pdf`
+- Appendices: `Family-Matters-SI_WALPPW.pdf`
 
 ## Code and Data
 
