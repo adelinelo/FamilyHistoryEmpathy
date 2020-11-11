@@ -28,7 +28,7 @@ head(data_wave2)
 data_wave3<-read.dta13("wave3_analysis_data.dta")
 head(data_wave3)
 data_pooled<-read.dta13("pooled_analysis_data.dta")
-head(pooled_analysis_data)
+head(data_pooled)
 
 # Check data
 length(data_wave1$not_restrict_immigrant) # 1000
@@ -107,7 +107,7 @@ wave2_restrict_plot <- ggplot(data_wave2, aes(treatment, not_restrict_immigrant,
   ggtitle("Survey 2, (N=1274)") + theme(text = element_text(size=12)) + coord_cartesian(ylim=c(2.3, 3.6))
 wave2_restrict_plot
 
-# Wave 3 Immigrant_Restrict Outcome Plot
+# Wave 3 Not_Restrict_Immigrant Outcome Plot
 
 wave3_restrict_plot <- ggplot(data_wave3, aes(treatment, not_restrict_immigrant, fill = as.factor(treatment))) + 
   stat_summary(fun.y = mean, geom = "bar",width=.75) + 
@@ -189,14 +189,116 @@ pooled_therm_plot
 
 # Combined Plots
 
-grid_arrange_shared_legend(pooled_restrict_plot,wave1_restrict_plot,wave2_restrict_plot,wave3_restrict_plot, ncol =4, nrow = 1)
+not_restrict_plot<-grid_arrange_shared_legend(pooled_restrict_plot,wave1_restrict_plot,wave2_restrict_plot,wave3_restrict_plot, ncol =4, nrow = 1)
+ggsave("not_restrict_plot.jpg",not_restrict_plot, scale = 1, width = 11, height = 6, units = "in", dpi = 500)
 
-grid_arrange_shared_legend(pooled_therm_plot,wave2_therm_plot,wave3_therm_plot, ncol =3, nrow = 1)
+thermometer_plot<-grid_arrange_shared_legend(pooled_therm_plot,wave2_therm_plot,wave3_therm_plot, ncol =3, nrow = 1)
+ggsave("thermometer_plot.jpg",thermometer_plot, scale = 1, width = 11, height = 6, units = "in", dpi = 500)
 
 
-##################
-##Subgroup Plots##
-##################
+################################
+##Subgroup Plots in Main Paper##
+################################
+
+######## Partisanship
+
+## No Restrictions Outcome
+
+restrict_data_partisan<-read.csv("partisanship_plot_restrict_updated.csv")
+head(restrict_data_partisan)
+
+# Reordering factor variables
+restrict_data_partisan$model<-factor(restrict_data_partisan$model,levels=c("Republican","Democrat"))
+restrict_data_partisan$term<-factor(restrict_data_partisan$term,levels=c("Survey 1","Survey 2","Survey 3"))
+# Restrict Plots
+restrict_partisan_plot<-small_multiple(restrict_data_partisan, dot_args = list(size=.75,color="black"),whisker_args = list(size = .1,color="black")) +
+  theme_bw() +  geom_hline(yintercept = 0, colour = "grey60", linetype = 2,size=.75) +
+  ggtitle("Partisan Subgroup Effects: Open Immigration") + 
+  scale_y_continuous(limits = c(-0.3, 1.2)) +
+  theme(plot.title = element_text(size=12),legend.position="none",
+        axis.text.x=element_text(size=12),
+        axis.text.y=element_text(size=10),
+        strip.text.y=element_text(size=11),
+        strip.background = element_rect(fill="grey90"))
+restrict_partisan_plot
+
+## Thermometer Outcome
+
+therm_data_partisan<-read.csv("partisanship_plot_thermometer_updated.csv")
+head(therm_data_partisan)
+
+# Reordering factor variables
+therm_data_partisan$model<-factor(therm_data_partisan$model,levels=c("Republican","Democrat"))
+therm_data_partisan$term<-factor(therm_data_partisan$term,levels=c("Survey 2","Survey 3"))
+# Thermometer Plots
+therm_partisan_plot<-small_multiple(therm_data_partisan, dot_args = list(size=.75,color="black"),whisker_args = list(size = .1,color="black")) +
+  theme_bw() +  geom_hline(yintercept = 0, colour = "grey60", linetype = 2,size=.75) +
+  ggtitle("Partisan Subgroup Effects: Thermometer") + 
+  scale_y_continuous(limits = c(-3, 16)) +
+  theme(plot.title = element_text(size=12),legend.position="none",
+        axis.text.x=element_text(size=12),
+        axis.text.y=element_text(size=10),
+        strip.text.y=element_text(size=11),
+        strip.background = element_rect(fill="grey90"))
+therm_partisan_plot
+
+#ggarrange(restrict_partisan_plot,therm_partisan_plot,ncol=2,nrow=1)
+
+########### Trump Approval
+
+## No Restrictions Outcome
+
+restrict_data_trump<-read.csv("trump_plot_restrict.csv")
+head(restrict_data_trump)
+
+# Reordering factor variables
+restrict_data_trump$model<-factor(restrict_data_trump$model,levels=c("Approves","Disapproves"))
+restrict_data_trump$term<-factor(restrict_data_trump$term,levels=c("Survey 2","Survey 3"))
+# Restrict Plots
+restrict_trump_plot<-small_multiple(restrict_data_trump, dot_args = list(size=.75,color="black"),whisker_args = list(size = .1,color="black")) +
+  theme_bw() +  geom_hline(yintercept = 0, colour = "grey60", linetype = 2,size=.75) +
+  ggtitle("Trump Subgroup Effects: Open Immigration") + 
+  scale_y_continuous(limits = c(-0.3, 1.2)) +
+  theme(plot.title = element_text(size=12),legend.position="none",
+        axis.text.x=element_text(size=12),
+        axis.text.y=element_text(size=10),
+        strip.text.y=element_text(size=11),
+        strip.background = element_rect(fill="grey90"))
+restrict_trump_plot
+
+## Thermometer Outcome
+
+therm_data_trump<-read.csv("trump_plot_thermometer.csv")
+head(therm_data_trump)
+
+# Reordering factor variables
+therm_data_trump$model<-factor(therm_data_trump$model,levels=c("Approves","Disapproves"))
+therm_data_trump$term<-factor(therm_data_trump$term,levels=c("Survey 2","Survey 3"))
+# Thermometer Plots
+therm_trump_plot<-small_multiple(therm_data_trump, dot_args = list(size=.75,color="black"),whisker_args = list(size = .1,color="black")) +
+  theme_bw() +  geom_hline(yintercept = 0, colour = "grey60", linetype = 2,size=.75) +
+  ggtitle("Trump Subgroup Effects: Thermometer") + 
+  scale_y_continuous(limits = c(-3, 16)) +
+  theme(plot.title = element_text(size=12),legend.position="none",
+        axis.text.x=element_text(size=12),
+        axis.text.y=element_text(size=10),
+        strip.text.y=element_text(size=11),
+        strip.background = element_rect(fill="grey90"))
+therm_trump_plot
+
+# All Outcomes
+partisan_plots<-ggarrange(restrict_partisan_plot,restrict_trump_plot,therm_partisan_plot,therm_trump_plot,ncol=2,nrow=2)
+ggsave("partisan_plots.jpg",partisan_plots, scale = 1, width =10, height = 7, units = "in", dpi = 500)
+
+# Restrict Outcome
+ggarrange(restrict_partisan_plot,restrict_trump_plot,ncol=2,nrow=1)
+
+# Thermometer Outcome
+ggarrange(therm_partisan_plot,therm_trump_plot,ncol=2,nrow=1)
+
+########################
+##Subgroup Plots in SI##
+########################
 
 ######## Partisanship
 
@@ -281,7 +383,6 @@ therm_trump_plot<-small_multiple(therm_data_trump, dot_args = list(size=.75,colo
 therm_trump_plot
 
 ggarrange(restrict_partisan_plot,therm_partisan_plot,restrict_trump_plot,therm_trump_plot,ncol=2,nrow=2)
-
 
 ######## Immigration Generation
 
